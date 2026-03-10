@@ -1,33 +1,54 @@
-# Power Load Characteristic Analysis
+# Power Load Characteristic Analysis + EMD-LSTM Forecasting
 
-This project provides a complete, beginner-friendly Python workflow to analyze power load time-series data from a CSV file.
+This project is a complete, beginner-friendly Python workflow for **power load time-series analysis and forecasting**.
 
-It automatically:
-- finds the uploaded CSV file,
-- detects encoding (including Chinese-compatible encodings),
-- infers timestamp/load columns (supports Chinese column names),
-- cleans data,
-- runs multi-time-scale + seasonal + statistical analysis,
-- saves all figures and tables for reproducible reporting.
+It includes two major parts:
+1. **Load characteristic analysis** (multi-time-scale, seasonal, statistical).
+2. **EMD decomposition + IMF-wise LSTM forecasting + reconstruction**.
+
+The pipeline is designed for **CPU-only environments** and does **not require CUDA/GPU**.
+
+---
+
+## End-to-End Workflow
+
+```text
+Load data
+-> Preprocessing
+-> Characteristic analysis
+-> EMD decomposition
+-> IMF-wise LSTM forecasting
+-> Reconstruction of final prediction
+-> Evaluation + visualization
+```
+
+---
 
 ## Project Structure
 
 ```text
 .
-├── data/                     # Place source CSV data here (auto-detected)
-├── figures/                  # Generated figures
-├── outputs/                  # Generated tables and cleaned data
+├── data/                       # Input CSV data (auto-detected)
+├── figures/                    # Generated figures
+├── outputs/                    # Generated tables/results
 ├── src/
-│   ├── data_loader.py        # CSV discovery + robust loading
-│   ├── preprocess.py         # Column inference + cleaning + time features
-│   ├── statistics_analysis.py# Statistics and variability metrics
-│   ├── time_scale_analysis.py# Year/month/week/day/hour analysis + figures
-│   ├── season_analysis.py    # Seasonal and distribution/ramp analysis
-│   └── visualization.py      # Plot style and save helper
-├── main.py                   # One-click entrypoint
+│   ├── data_loader.py          # CSV discovery + robust loading
+│   ├── preprocess.py           # Column inference + cleaning + time features
+│   ├── statistics_analysis.py  # Basic statistics + volatility metrics
+│   ├── time_scale_analysis.py  # Multi-time-scale analysis + plots
+│   ├── season_analysis.py      # Seasonal + statistical characteristic plots
+│   ├── emd_decomposition.py    # EMD decomposition and IMF plotting
+│   ├── lstm_dataset.py         # Sequence dataset utilities for LSTM
+│   ├── lstm_model.py           # LSTM model definition
+│   ├── forecast_pipeline.py    # IMF-wise training, prediction, reconstruction
+│   ├── evaluation.py           # Metrics and forecast evaluation plots
+│   └── visualization.py        # Unified plotting style and save helper
+├── main.py
 ├── requirements.txt
 └── README.md
 ```
+
+---
 
 ## Installation
 
@@ -35,52 +56,59 @@ It automatically:
 python -m pip install -r requirements.txt
 ```
 
-## How to Run
+### Notes on EMD package
+- The code imports `PyEMD` via:
+  ```python
+  from PyEMD import EMD
+  ```
+- In `requirements.txt`, the corresponding package is `EMD-signal`, which is a commonly used and stable installation source for `PyEMD`.
+
+### Notes on CPU-only PyTorch
+- This project uses `torch` in CPU mode only.
+- Code explicitly sets:
+  - `device = torch.device("cpu")`
+- No CUDA-specific code is used.
+
+---
+
+## Run
 
 ```bash
 python main.py
 ```
 
-## What the Pipeline Does
+---
 
-1. **Data loading and preprocessing**
-   - Automatically finds CSV in repo (prefers `data/`).
-   - Detects encoding (`utf-8`, `gb18030`, etc.).
-   - Infers timestamp and load columns using both English and Chinese keywords.
-   - Converts timestamp to datetime, sorts by time.
-   - Handles missing values and duplicated timestamps.
-   - Outputs:
-     - `outputs/cleaned_data.csv`
-     - `outputs/data_quality_report.csv`
-     - `outputs/dataset_metadata.csv`
+## Input Data Handling
 
-2. **Basic statistical analysis**
-   - Computes count, mean, median, min, max, std, variance, CV, skewness, kurtosis, quartiles.
-   - Output:
-     - `outputs/basic_statistics.csv`
+The pipeline automatically:
+- Detects CSV files in the repository (prefers `data/`).
+- Detects encoding (`utf-8`, `utf-8-sig`, `gb18030`, `gbk`, etc.).
+- Infers timestamp and load columns using:
+  - Chinese/English column keyword matching,
+  - parse-success fallback rules.
+- Handles non-standard column names.
+- Cleans missing values and duplicate timestamps.
 
-3. **Multi-time-scale analysis**
-   - Yearly / monthly / weekly / daily / hourly descriptive statistics.
-   - Outputs:
-     - `outputs/yearly_statistics.csv`
-     - `outputs/monthly_statistics.csv`
-     - `outputs/weekly_statistics.csv`
-     - `outputs/daily_statistics.csv`
-     - `outputs/hourly_statistics.csv`
+---
 
-4. **Seasonal and statistical characteristic analysis**
-   - Seasonal comparison by Spring/Summer/Autumn/Winter.
-   - Distribution analysis (Histogram+KDE, ECDF).
-   - Volatility and ramp analysis.
-   - Peak-valley analysis and daily trends.
-   - Outputs:
-     - `outputs/monthly_volatility.csv`
-     - `outputs/seasonal_volatility.csv`
-     - `outputs/daily_peak_valley_metrics.csv`
+## Characteristic Analysis Outputs
 
-## Required Figures Produced
+### Key tables in `outputs/`
+- `cleaned_data.csv`
+- `data_quality_report.csv`
+- `dataset_metadata.csv`
+- `basic_statistics.csv`
+- `yearly_statistics.csv`
+- `monthly_statistics.csv`
+- `weekly_statistics.csv`
+- `daily_statistics.csv`
+- `hourly_statistics.csv`
+- `monthly_volatility.csv`
+- `seasonal_volatility.csv`
+- `daily_peak_valley_metrics.csv`
 
-The project generates at least these required figures in `figures/`:
+### Required characteristic figures in `figures/`
 1. `01_raw_load_time_series.png`
 2. `02_rolling_mean_trend.png`
 3. `03_monthly_average_load.png`
@@ -100,14 +128,42 @@ The project generates at least these required figures in `figures/`:
 17. `17_load_ramp_distribution.png`
 18. `18_monthly_volatility_comparison.png`
 
-Additional figure:
+Additional analysis figures:
 - `19_daily_load_curve_samples.png`
 - `20_seasonal_distribution_kde.png`
 
-## Notes on Non-standard Column Names
+---
 
-If column names are non-standard (including Chinese names), the code auto-detects:
-- timestamp columns by keywords and datetime parse success,
-- load columns by keywords and numeric parse success.
+## EMD-LSTM Forecasting Outputs
 
-The inferred columns are saved to `outputs/dataset_metadata.csv`.
+### EMD outputs
+- `outputs/imf_components.csv`
+- `figures/21_emd_decomposition_overview.png`
+- `figures/22_imf_components_plot.png`
+
+### LSTM training + forecast outputs
+- `figures/23_training_loss_curves.png`
+- `outputs/forecast_results.csv`
+- `outputs/forecast_metrics.csv`
+- `figures/24_forecast_vs_actual.png`
+- `figures/25_forecast_error_distribution.png`
+- `figures/26_zoomed_prediction_plot.png`
+
+### Evaluation metrics
+- MAE
+- RMSE
+- MAPE
+- R2
+
+---
+
+## Beginner-friendly modeling notes
+
+- The forecasting strategy is **IMF-wise modeling**:
+  1. Decompose load into IMFs.
+  2. Train one LSTM per IMF.
+  3. Predict each IMF independently.
+  4. Reconstruct final prediction by summing IMF predictions.
+- Default configuration is intentionally simple and readable.
+- You can tune `ForecastConfig` in `main.py` for lookback window, epochs, hidden size, etc.
+

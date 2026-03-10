@@ -11,6 +11,8 @@ import seaborn as sns
 from src.data_loader import choose_primary_dataset, load_csv_robust
 from src.preprocess import clean_load_data, infer_timestamp_and_load_columns
 from src.season_analysis import create_season_figures, create_statistical_character_figures
+from src.emd_decomposition import perform_emd, plot_emd_overview, plot_imf_components, save_imfs
+from src.forecast_pipeline import ForecastConfig, run_imf_lstm_forecast
 from src.statistics_analysis import basic_statistics, monthly_volatility, save_dataframe
 from src.time_scale_analysis import compute_time_scale_tables, create_required_time_scale_figures
 from src.visualization import configure_style, save_figure
@@ -83,6 +85,26 @@ def main() -> None:
     ax.set_ylabel("Monthly Std Dev of Load")
     save_figure(fig, figures_dir, "18_monthly_volatility_comparison.png")
 
+
+    # EMD decomposition + IMF-wise LSTM forecasting + reconstruction
+    imfs = perform_emd(cleaned_df["load"])
+    imf_df = save_imfs(imfs, cleaned_df["timestamp"], outputs_dir)
+    plot_emd_overview(cleaned_df["load"], imfs, figures_dir)
+    plot_imf_components(imf_df, figures_dir)
+
+    forecast_config = ForecastConfig(
+        lookback=96,
+        train_ratio=0.8,
+        hidden_size=32,
+        num_layers=1,
+        dropout=0.0,
+        learning_rate=1e-3,
+        epochs=20,
+        batch_size=64,
+        random_seed=42,
+    )
+    forecast_metrics = run_imf_lstm_forecast(cleaned_df, imf_df, outputs_dir, figures_dir, forecast_config)
+
     # Console summary report for quick inspection
     print("=== Data Quality Report ===")
     for k, v in quality.items():
@@ -92,6 +114,9 @@ def main() -> None:
     print(f"Load column: {inferred.load_col}")
     print(f"Detected encoding: {encoding}")
     print(f"Dataset path: {dataset_path}")
+    print("\n=== Forecast Metrics ===")
+    for metric_name, metric_value in forecast_metrics.items():
+        print(f"{metric_name}: {metric_value:.6f}")
     print("\nAnalysis complete. See outputs/ and figures/ for results.")
 
 
