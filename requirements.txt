@@ -5,5 +5,6 @@ seaborn
 scipy
 statsmodels
 PyEMD
-torch
+# Install GPU-enabled PyTorch (CUDA 12.1) separately with:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 scikit-learn
