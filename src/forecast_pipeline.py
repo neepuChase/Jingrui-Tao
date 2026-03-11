@@ -25,7 +25,7 @@ class ForecastConfig:
     dropout: float = 0.1
     learning_rate: float = 1e-3
     epochs: int = 20
-    batch_size: int = 64
+    batch_size: int = 128
     random_seed: int = 42
     tcn_channels: tuple[int, ...] = (32, 32, 32)
     tcn_kernel_size: int = 3
