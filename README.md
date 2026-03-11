@@ -86,6 +86,23 @@ pip install -r requirements.txt
 - 项目支持 **CPU-only** 环境；
 - 默认不依赖 GPU/CUDA，也可完成全流程分析与预测。
 
+### GPU Training Support
+项目已支持自动设备选择：当检测到 CUDA 可用时自动使用 GPU（例如 NVIDIA GeForce RTX 3080），否则自动回退到 CPU。
+
+推荐在 PyTorch 2.3 + CUDA 12.1 环境中安装 GPU 版本 PyTorch：
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
+```
+
+程序启动后会输出当前设备，例如：
+
+```text
+Using device: cuda
+GPU: NVIDIA GeForce RTX 3080
+```
+
 ---
 
 ## 6. 运行方法

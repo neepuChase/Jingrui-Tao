@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import torch
 
 from src.data_loader import choose_primary_dataset, load_csv_robust
 from src.emd_decomposition import perform_emd, plot_emd_overview, plot_imf_components, save_imfs
@@ -38,6 +39,11 @@ def main() -> None:
     outputs_dir.mkdir(exist_ok=True)
 
     configure_style()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
+    if device.type == "cuda":
+        print(f"GPU: {torch.cuda.get_device_name(device)}")
 
     # load CSV data
     dataset_path = choose_primary_dataset(repo_root)

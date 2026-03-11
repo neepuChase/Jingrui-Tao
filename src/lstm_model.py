@@ -6,6 +6,9 @@ import torch
 from torch import nn
 
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 class LSTMForecaster(nn.Module):
     """Simple single-output LSTM forecaster."""
 
@@ -19,6 +22,7 @@ class LSTMForecaster(nn.Module):
             dropout=dropout if num_layers > 1 else 0.0,
         )
         self.head = nn.Linear(hidden_size, 1)
+        self.to(DEVICE)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         output, _ = self.lstm(x)
