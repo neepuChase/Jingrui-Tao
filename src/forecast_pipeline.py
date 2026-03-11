@@ -20,7 +20,7 @@ from src.visualization import save_figure
 
 @dataclass
 class ForecastConfig:
-    lookback: int = 96
+    lookback: int = 672
     train_ratio: float = 0.8
     dropout: float = 0.1
     learning_rate: float = 1e-3
@@ -29,6 +29,7 @@ class ForecastConfig:
     random_seed: int = 42
     tcn_channels: tuple[int, ...] = (32, 32, 32)
     tcn_kernel_size: int = 3
+    horizon: int = 96
 
 
 def _set_seed(seed: int) -> None:
@@ -50,12 +51,13 @@ def _build_model(config: ForecastConfig, device: torch.device) -> nn.Module:
         channels=list(config.tcn_channels),
         kernel_size=config.tcn_kernel_size,
         dropout=config.dropout,
+        output_size=config.horizon,
     ).to(device)
 
 
 def _train_single_series(series: np.ndarray, config: ForecastConfig, device: torch.device) -> tuple[np.ndarray, np.ndarray, list[float]]:
     n = len(series)
-    split_idx = max(int(n * config.train_ratio), config.lookback + 2)
+    split_idx = max(int(n * config.train_ratio), config.lookback + config.horizon)
 
     train_series = series[:split_idx]
     test_series = series[split_idx - config.lookback :]
@@ -66,7 +68,7 @@ def _train_single_series(series: np.ndarray, config: ForecastConfig, device: tor
     train_norm = (train_series - mean) / std
     test_norm = (test_series - mean) / std
 
-    x_train, y_train = create_sequences(train_norm, config.lookback)
+    x_train, y_train = create_sequences(train_norm, config.lookback, config.horizon)
     if len(x_train) == 0:
         raise ValueError("训练样本不足，请减小 lookback 或增加数据量。")
 
@@ -96,20 +98,36 @@ def _train_single_series(series: np.ndarray, config: ForecastConfig, device: tor
         loss_history.append(epoch_loss / max(1, len(train_loader)))
 
     model.eval()
-    horizon = n - split_idx
-    input_window = list(test_norm[: config.lookback])
-    preds_norm: list[float] = []
+    x_test, y_test = create_sequences(test_norm, config.lookback, config.horizon)
+    if len(x_test) == 0:
+        raise ValueError("测试样本不足，请增加数据量或减小 lookback/horizon。")
 
+    x_tensor = torch.from_numpy(x_test).unsqueeze(-1).to(device)
     with torch.no_grad():
-        for _ in range(horizon):
-            x = torch.tensor(input_window[-config.lookback :], dtype=torch.float32, device=device).view(1, config.lookback, 1)
-            with autocast(enabled=device.type == "cuda"):
-                yhat = float(model(x).item())
-            preds_norm.append(yhat)
-            input_window.append(yhat)
+        with autocast(enabled=device.type == "cuda"):
+            preds_test = model(x_tensor).detach().cpu().numpy()
 
-    y_pred = np.asarray(preds_norm) * std + mean
-    y_true = series[split_idx: split_idx + len(y_pred)]
+    preds_test = preds_test * std + mean
+    y_test = y_test * std + mean
+
+    horizon = config.horizon
+    total_len = n - split_idx
+    pred_sum = np.zeros(total_len, dtype=np.float64)
+    pred_count = np.zeros(total_len, dtype=np.int32)
+    true_values = np.zeros(total_len, dtype=np.float64)
+
+    for i in range(len(preds_test)):
+        for h in range(horizon):
+            target_idx = i + h
+            if target_idx >= total_len:
+                continue
+            pred_sum[target_idx] += float(preds_test[i, h])
+            pred_count[target_idx] += 1
+            true_values[target_idx] = float(y_test[i, h])
+
+    valid_mask = pred_count > 0
+    y_pred = (pred_sum[valid_mask] / pred_count[valid_mask]).astype(np.float64)
+    y_true = true_values[valid_mask].astype(np.float64)
     return y_true, y_pred, loss_history
 
 
@@ -136,7 +154,7 @@ def _forecast_by_components(
     true_reconstructed = np.sum(np.vstack(all_true), axis=0)
     pred_reconstructed = np.sum(np.vstack(all_pred), axis=0)
 
-    split_idx = max(int(len(cleaned_df) * config.train_ratio), config.lookback + 2)
+    split_idx = max(int(len(cleaned_df) * config.train_ratio), config.lookback + config.horizon)
     timestamps_test = cleaned_df["timestamp"].reset_index(drop=True).iloc[split_idx: split_idx + len(true_reconstructed)]
 
     forecast_df = pd.DataFrame(
@@ -260,8 +278,12 @@ def run_tcn_forecast_comparison(
 
     print("最优预测方案:", best_strategy)
     (outputs_dir / "最优预测方案.txt").write_text(best_strategy, encoding="utf-8")
-    final_forecast.to_csv(outputs_dir / "最终预测结果.csv", index=False, encoding="utf-8-sig")
-    save_metrics(final_metrics, outputs_dir)
+    final_forecast.to_csv(outputs_dir / "预测结果.csv", index=False, encoding="utf-8-sig")
+    save_metrics(final_metrics, outputs_dir, filename="预测指标.csv")
+
+    import json
+    with (outputs_dir / "预测指标.json").open("w", encoding="utf-8") as f:
+        json.dump(final_metrics, f, ensure_ascii=False, indent=2)
 
     plot_forecast_results(ts, final_forecast["真实负荷"].values, final_forecast["预测负荷"].values, figures_dir)
     generate_error_analysis_outputs(final_forecast, outputs_dir, figures_dir)
