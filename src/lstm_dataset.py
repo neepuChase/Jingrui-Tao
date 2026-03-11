@@ -7,15 +7,15 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 
-def create_sequences(series: np.ndarray, lookback: int) -> tuple[np.ndarray, np.ndarray]:
+def create_sequences(series: np.ndarray, lookback: int, horizon: int = 1) -> tuple[np.ndarray, np.ndarray]:
     """Create supervised learning sequences from a 1D series."""
     x, y = [], []
-    for i in range(len(series) - lookback):
+    for i in range(len(series) - lookback - horizon + 1):
         x.append(series[i : i + lookback])
-        y.append(series[i + lookback])
+        y.append(series[i + lookback : i + lookback + horizon])
 
     if not x:
-        return np.empty((0, lookback), dtype=np.float32), np.empty((0,), dtype=np.float32)
+        return np.empty((0, lookback), dtype=np.float32), np.empty((0, horizon), dtype=np.float32)
 
     return np.asarray(x, dtype=np.float32), np.asarray(y, dtype=np.float32)
 
@@ -23,6 +23,6 @@ def create_sequences(series: np.ndarray, lookback: int) -> tuple[np.ndarray, np.
 def build_dataloader(x: np.ndarray, y: np.ndarray, batch_size: int) -> DataLoader:
     """Create a PyTorch DataLoader from sequence arrays."""
     features = torch.from_numpy(x).unsqueeze(-1)  # [N, lookback, 1]
-    targets = torch.from_numpy(y).unsqueeze(-1)   # [N, 1]
+    targets = torch.from_numpy(y)                 # [N, horizon]
     dataset = TensorDataset(features, targets)
     return DataLoader(dataset, batch_size=batch_size, shuffle=True)

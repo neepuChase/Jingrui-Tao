@@ -57,7 +57,7 @@ class TemporalBlock(nn.Module):
 
 
 class TCNForecaster(nn.Module):
-    """Standard TCN forecaster for one-step-ahead prediction."""
+    """Standard TCN forecaster for multi-step load forecasting."""
 
     def __init__(
         self,
@@ -65,6 +65,7 @@ class TCNForecaster(nn.Module):
         channels: list[int] | None = None,
         kernel_size: int = 3,
         dropout: float = 0.1,
+        output_size: int = 96,
     ) -> None:
         super().__init__()
         channels = channels or [32, 32, 32]
@@ -77,13 +78,12 @@ class TCNForecaster(nn.Module):
             in_ch = out_ch
 
         self.network = nn.Sequential(*layers)
-        self.regressor = nn.Linear(channels[-1], 1)
+        self.regressor = nn.Linear(channels[-1], output_size)
         self.to(DEVICE)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Input shape: [batch, seq_len, features], output: [batch]."""
+        """Input shape: [batch, seq_len, features], output: [batch, horizon]."""
         x = x.transpose(1, 2)  # [B, C, L]
         y = self.network(x)
         last_state = y[:, :, -1]
-        pred = self.regressor(last_state)
-        return pred.squeeze(-1)
+        return self.regressor(last_state)
