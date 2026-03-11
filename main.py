@@ -83,13 +83,14 @@ def main() -> None:
     plot_imf_components(imf_df, figures_dir)
 
     forecast_config = ForecastConfig(
-        lookback=96,
+        lookback=672,
         train_ratio=0.8,
         dropout=0.1,
         learning_rate=1e-3,
         epochs=20,
         batch_size=128,
         random_seed=42,
+        horizon=96,
     )
     metrics = run_tcn_forecast_comparison(cleaned_df, imf_df, outputs_dir, figures_dir, forecast_config)
 
