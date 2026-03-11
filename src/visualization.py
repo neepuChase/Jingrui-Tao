@@ -25,8 +25,10 @@ def configure_style() -> None:
         "Arial Unicode MS",
     ]
     available = {f.name for f in font_manager.fontManager.ttflist}
-    selected = next((name for name in candidate_fonts if name in available), "DejaVu Sans")
-    plt.rcParams["font.sans-serif"] = [selected, "DejaVu Sans"]
+    selected_fonts = [name for name in candidate_fonts if name in available]
+    if not selected_fonts:
+        selected_fonts = ["DejaVu Sans"]
+    plt.rcParams["font.sans-serif"] = selected_fonts + ["DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
 
 
