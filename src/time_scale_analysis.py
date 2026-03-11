@@ -11,17 +11,6 @@ import seaborn as sns
 from src.visualization import save_figure
 
 
-WEEKDAY_MAP = {
-    "Monday": "周一",
-    "Tuesday": "周二",
-    "Wednesday": "周三",
-    "Thursday": "周四",
-    "Friday": "周五",
-    "Saturday": "周六",
-    "Sunday": "周日",
-}
-
-
 def compute_time_scale_tables(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     tables: dict[str, pd.DataFrame] = {}
     tables["年度"] = df.groupby("year")["load"].describe().reset_index()
@@ -66,31 +55,3 @@ def create_required_time_scale_figures(df: pd.DataFrame, figures_dir: Path) -> N
     ax.set_ylabel("平均负荷")
     ax.legend()
     save_figure(fig, figures_dir, "工作日与周末对比图.png")
-
-    hourly_avg = df.groupby("hour")["load"].mean()
-    fig, ax = plt.subplots()
-    ax.plot(hourly_avg.index, hourly_avg.values, marker="o", color="tab:green", label="平均负荷")
-    ax.set_title("日内平均负荷曲线图")
-    ax.set_xlabel("小时")
-    ax.set_ylabel("平均负荷")
-    ax.legend()
-    save_figure(fig, figures_dir, "日内平均负荷曲线图.png")
-
-    mh = df.pivot_table(values="load", index="month", columns="hour", aggfunc="mean")
-    fig, ax = plt.subplots(figsize=(14, 6))
-    sns.heatmap(mh, cmap="YlOrRd", ax=ax)
-    ax.set_title("月-小时热力图")
-    ax.set_xlabel("小时")
-    ax.set_ylabel("月份")
-    save_figure(fig, figures_dir, "月-小时热力图.png")
-
-    wh = df.pivot_table(values="load", index="weekday_name", columns="hour", aggfunc="mean")
-    ordered_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    wh = wh.reindex(ordered_days)
-    wh.index = [WEEKDAY_MAP.get(i, i) for i in wh.index]
-    fig, ax = plt.subplots(figsize=(14, 6))
-    sns.heatmap(wh, cmap="Blues", ax=ax)
-    ax.set_title("周-小时热力图")
-    ax.set_xlabel("小时")
-    ax.set_ylabel("星期")
-    save_figure(fig, figures_dir, "周-小时热力图.png")

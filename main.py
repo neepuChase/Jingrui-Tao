@@ -88,7 +88,7 @@ def main() -> None:
         dropout=0.1,
         learning_rate=1e-3,
         epochs=20,
-        batch_size=64,
+        batch_size=128,
         random_seed=42,
     )
     metrics = run_tcn_forecast_comparison(cleaned_df, imf_df, outputs_dir, figures_dir, forecast_config)
