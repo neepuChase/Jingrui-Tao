@@ -1,11 +1,10 @@
-"""TCN-only forecasting pipeline with IMF auto-selection."""
+"""TCN-only forecasting pipeline with user-defined IMF components."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -15,7 +14,6 @@ from torch.cuda.amp import GradScaler, autocast
 from src.evaluation import calculate_metrics, generate_error_analysis_outputs, plot_forecast_results, save_metrics
 from src.lstm_dataset import build_dataloader, create_sequences
 from src.tcn_model import TCNForecaster
-from src.visualization import save_figure
 
 
 @dataclass
@@ -30,6 +28,7 @@ class ForecastConfig:
     tcn_channels: tuple[int, ...] = (32, 32, 32)
     tcn_kernel_size: int = 3
     horizon: int = 96
+    imf_components: int = 3
 
 
 def _set_seed(seed: int) -> None:
@@ -170,28 +169,19 @@ def _forecast_by_components(
     return forecast_df, all_losses, metrics, timestamps_test
 
 
-
 def _build_k_component_df(cleaned_df: pd.DataFrame, imf_df: pd.DataFrame, k: int) -> pd.DataFrame:
     imf_cols = [c for c in imf_df.columns if c.startswith("IMF")]
+    if not 1 <= k <= 10:
+        raise ValueError("IMF_COMPONENTS 必须在 1-10 之间")
+    if k > len(imf_cols):
+        raise ValueError(f"IMF_COMPONENTS={k} 超出可用 IMF 数量({len(imf_cols)})")
+
     selected = imf_df[imf_cols[:k]].copy()
     original = cleaned_df["load"].values
     remainder = original - selected.sum(axis=1).values
-    selected[f"remainder_component(k={k})"] = remainder
+    selected["remainder_component"] = remainder
     selected.insert(0, "timestamp", imf_df["timestamp"].values)
     return selected
-
-
-def _plot_imf_k_comparison(df: pd.DataFrame, figures_dir: Path) -> None:
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(df["num_imf_components"], df["RMSE"], marker="o", label="RMSE")
-    ax.plot(df["num_imf_components"], df["MAE"], marker="s", label="MAE")
-    ax.plot(df["num_imf_components"], df["MAPE"], marker="^", label="MAPE")
-    ax.set_title("IMF Component Count Selection Comparison")
-    ax.set_xlabel("Number of IMF Components")
-    ax.set_ylabel("Metric Value")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    save_figure(fig, figures_dir, "imf_component_count_selection_comparison.png")
 
 
 def run_tcn_forecast_comparison(
@@ -206,48 +196,29 @@ def run_tcn_forecast_comparison(
     torch.backends.cudnn.benchmark = True
     device = _get_device()
 
-    # A. Non-decomposed forecasting
     undecomposed_df = pd.DataFrame({"timestamp": cleaned_df["timestamp"], "raw_load": cleaned_df["load"]})
     un_forecast, _, un_metrics, ts = _forecast_by_components(cleaned_df, undecomposed_df, cfg, outputs_dir, "non_decomposed", device)
     print("Non-decomposed forecast metrics:", un_metrics)
 
-    # B. IMF component count selection
-    imf_cols = [c for c in imf_df.columns if c.startswith("IMF")]
-    max_k = len(imf_cols)
-    candidate_rows = []
-    best = None
-
-    for k in range(1, max_k + 1):
-        print(f"Testing IMF component count: {k}")
-        comp_df = _build_k_component_df(cleaned_df, imf_df, k)
-        _, _, metrics, _ = _forecast_by_components(cleaned_df, comp_df, cfg, outputs_dir, f"emd_decomposed_k{k}", device)
-        row = {"num_imf_components": k, **metrics}
-        candidate_rows.append(row)
-
-        score = (metrics["RMSE"], metrics["MAE"], metrics["MAPE"])
-        if best is None or score < best[0]:
-            best = (score, k, metrics)
-
-    select_df = pd.DataFrame(candidate_rows)
-    select_df.to_csv(outputs_dir / "imf_component_count_selection_results.csv", index=False, encoding="utf-8-sig")
-    _plot_imf_k_comparison(select_df, figures_dir)
-
-    best_k = int(best[1]) if best else 1
-    (outputs_dir / "best_imf_component_count.txt").write_text(str(best_k), encoding="utf-8")
-    print("Best IMF component count:", best_k)
-
-    best_comp_df = _build_k_component_df(cleaned_df, imf_df, best_k)
-    de_forecast, _, de_metrics, _ = _forecast_by_components(cleaned_df, best_comp_df, cfg, outputs_dir, "emd_decomposed", device)
-    print("Decomposed forecast metrics:", de_metrics)
+    component_df = _build_k_component_df(cleaned_df, imf_df, cfg.imf_components)
+    de_forecast, _, de_metrics, _ = _forecast_by_components(
+        cleaned_df,
+        component_df,
+        cfg,
+        outputs_dir,
+        f"emd_decomposed_imf{cfg.imf_components}",
+        device,
+    )
+    de_forecast.to_csv(outputs_dir / f"TCN预测结果_IMF{cfg.imf_components}.csv", index=False, encoding="utf-8-sig")
+    print(f"Decomposed forecast metrics (IMF={cfg.imf_components}):", de_metrics)
 
     compare_df = pd.DataFrame(
         [
             {"strategy": "Non-decomposed TCN Forecast", **un_metrics},
-            {"strategy": f"EMD-decomposed TCN Forecast (k={best_k})", **de_metrics},
+            {"strategy": f"EMD-decomposed TCN Forecast (k={cfg.imf_components})", **de_metrics},
         ]
     )
     compare_df.to_csv(outputs_dir / "decomposition_vs_non_decomposition_comparison.csv", index=False, encoding="utf-8-sig")
-    
 
     if (de_metrics["RMSE"], de_metrics["MAE"], de_metrics["MAPE"]) < (un_metrics["RMSE"], un_metrics["MAE"], un_metrics["MAPE"]):
         best_strategy = "TCN Forecast After EMD Decomposition"
@@ -264,6 +235,7 @@ def run_tcn_forecast_comparison(
     save_metrics(final_metrics, outputs_dir, filename="forecast_metrics.csv")
 
     import json
+
     with (outputs_dir / "forecast_metrics.json").open("w", encoding="utf-8") as f:
         json.dump(final_metrics, f, ensure_ascii=False, indent=2)
 

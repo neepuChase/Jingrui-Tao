@@ -18,6 +18,9 @@ from src.time_scale_analysis import compute_time_scale_tables, create_required_t
 from src.visualization import configure_style
 
 
+IMF_COMPONENTS = 3
+
+
 def save_quality_report(report: dict, output_path: Path) -> None:
     quality_df = pd.DataFrame({"metric": list(report.keys()), "value": list(report.values())})
     quality_df.to_csv(output_path, index=False, encoding="utf-8-sig")
@@ -31,6 +34,10 @@ def main() -> None:
     outputs_dir.mkdir(exist_ok=True)
 
     configure_style()
+
+    if not 1 <= IMF_COMPONENTS <= 10:
+        raise ValueError("IMF_COMPONENTS 必须在 1-10 之间")
+    print(f"使用 IMF 分量数: {IMF_COMPONENTS}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
@@ -91,6 +98,7 @@ def main() -> None:
         batch_size=128,
         random_seed=42,
         horizon=96,
+        imf_components=IMF_COMPONENTS,
     )
     metrics = run_tcn_forecast_comparison(cleaned_df, imf_df, outputs_dir, figures_dir, forecast_config)
 
@@ -102,7 +110,7 @@ def main() -> None:
     for metric_name, metric_value in metrics.items():
         print(f"{metric_name}: {metric_value:.6f}")
 
-    print("\nPipeline completed: load data → clean → feature analysis → EMD (up to 10 IMF) → IMF auto-selection → TCN forecast → decomposition/non-decomposition comparison → auto-select best.")
+    print("\nPipeline completed: load data → clean → feature analysis → EMD (up to 10 IMF) → user-defined IMF decomposition forecast → decomposition/non-decomposition comparison.")
 
 
 if __name__ == "__main__":
