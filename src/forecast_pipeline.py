@@ -12,7 +12,7 @@ import torch
 from torch import nn
 from torch.cuda.amp import GradScaler, autocast
 
-from src.evaluation import calculate_metrics, plot_forecast_results, save_metrics
+from src.evaluation import calculate_metrics, generate_error_analysis_outputs, plot_forecast_results, save_metrics
 from src.lstm_dataset import build_dataloader, create_sequences
 from src.tcn_model import TCNForecaster
 from src.visualization import save_figure
@@ -152,17 +152,6 @@ def _forecast_by_components(
     return forecast_df, all_losses, metrics, timestamps_test
 
 
-def _plot_loss_curve(losses: dict[str, list[float]], figures_dir: Path) -> None:
-    fig, ax = plt.subplots(figsize=(14, 6))
-    for name, v in losses.items():
-        ax.plot(range(1, len(v) + 1), v, label=name)
-    ax.set_title("TCN训练损失曲线")
-    ax.set_xlabel("训练轮次")
-    ax.set_ylabel("MSE损失")
-    ax.legend(ncol=3, fontsize=8)
-    ax.grid(True, alpha=0.3)
-    save_figure(fig, figures_dir, "TCN训练损失曲线.png")
-
 
 def _build_k_component_df(cleaned_df: pd.DataFrame, imf_df: pd.DataFrame, k: int) -> pd.DataFrame:
     imf_cols = [c for c in imf_df.columns if c.startswith("IMF")]
@@ -219,7 +208,7 @@ def run_tcn_forecast_comparison(
 
     # A. 未分解预测
     undecomposed_df = pd.DataFrame({"时间戳": cleaned_df["timestamp"], "原始负荷": cleaned_df["load"]})
-    un_forecast, un_losses, un_metrics, ts = _forecast_by_components(cleaned_df, undecomposed_df, cfg, outputs_dir, "未分解", device)
+    un_forecast, _, un_metrics, ts = _forecast_by_components(cleaned_df, undecomposed_df, cfg, outputs_dir, "未分解", device)
     print("未分解预测指标:", un_metrics)
 
     # B. IMF分量数选择
@@ -248,7 +237,7 @@ def run_tcn_forecast_comparison(
     print("最优IMF分量数:", best_k)
 
     best_comp_df = _build_k_component_df(cleaned_df, imf_df, best_k)
-    de_forecast, de_losses, de_metrics, _ = _forecast_by_components(cleaned_df, best_comp_df, cfg, outputs_dir, "EMD分解", device)
+    de_forecast, _, de_metrics, _ = _forecast_by_components(cleaned_df, best_comp_df, cfg, outputs_dir, "EMD分解", device)
     print("分解预测指标:", de_metrics)
 
     compare_df = pd.DataFrame(
@@ -264,18 +253,16 @@ def run_tcn_forecast_comparison(
         best_strategy = "EMD分解后TCN预测"
         final_forecast = de_forecast
         final_metrics = de_metrics
-        final_losses = de_losses
     else:
         best_strategy = "未分解TCN预测"
         final_forecast = un_forecast
         final_metrics = un_metrics
-        final_losses = un_losses
 
     print("最优预测方案:", best_strategy)
     (outputs_dir / "最优预测方案.txt").write_text(best_strategy, encoding="utf-8")
     final_forecast.to_csv(outputs_dir / "最终预测结果.csv", index=False, encoding="utf-8-sig")
     save_metrics(final_metrics, outputs_dir)
 
-    _plot_loss_curve(final_losses, figures_dir)
     plot_forecast_results(ts, final_forecast["真实负荷"].values, final_forecast["预测负荷"].values, figures_dir)
+    generate_error_analysis_outputs(final_forecast, outputs_dir, figures_dir)
     return final_metrics
