@@ -25,7 +25,7 @@ def analyze_heavy_overload(cleaned_df: pd.DataFrame, outputs_dir: Path, figures_
     daily_df["is_heavy_overload"] = daily_df["daily_load"] > daily_df["threshold"]
 
     heavy_days = daily_df[daily_df["is_heavy_overload"]].copy()
-    heavy_days.to_csv(outputs_dir / "重过载日期识别结果.csv", index=False, encoding="utf-8-sig")
+    heavy_days.to_csv(outputs_dir / "heavy_overload_day_detection_results.csv", index=False, encoding="utf-8-sig")
 
     yearly_avg = cleaned_df.groupby("year", as_index=False)["load"].mean().rename(columns={"load": "yearly_average"})
     monthly_vs_yearly = monthly_df.merge(yearly_avg, on="year", how="left")
@@ -33,33 +33,33 @@ def analyze_heavy_overload(cleaned_df: pd.DataFrame, outputs_dir: Path, figures_
     monthly_vs_yearly["is_heavy_overload"] = monthly_vs_yearly["monthly_average"] > monthly_vs_yearly["threshold"]
 
     heavy_months = monthly_vs_yearly[monthly_vs_yearly["is_heavy_overload"]].copy()
-    heavy_months.to_csv(outputs_dir / "重过载月份识别结果.csv", index=False, encoding="utf-8-sig")
+    heavy_months.to_csv(outputs_dir / "heavy_overload_month_detection_results.csv", index=False, encoding="utf-8-sig")
 
     # Daily overload plot
     fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(pd.to_datetime(daily_df["day"]), daily_df["daily_load"], label="日平均负荷", linewidth=1)
-    ax.plot(pd.to_datetime(daily_df["day"]), daily_df["threshold"], label="月均值×1.3阈值", linestyle="--")
+    ax.plot(pd.to_datetime(daily_df["day"]), daily_df["daily_load"], label="Daily Average Load", linewidth=1)
+    ax.plot(pd.to_datetime(daily_df["day"]), daily_df["threshold"], label="Monthly Mean × 1.3 Threshold", linestyle="--")
     if not heavy_days.empty:
-        ax.scatter(pd.to_datetime(heavy_days["day"]), heavy_days["daily_load"], color="red", s=16, label="重过载日期")
-    ax.set_title("日尺度重过载识别图")
-    ax.set_xlabel("日期")
-    ax.set_ylabel("负荷")
+        ax.scatter(pd.to_datetime(heavy_days["day"]), heavy_days["daily_load"], color="red", s=16, label="Heavy Overload Days")
+    ax.set_title("Daily Heavy Overload Detection")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Load (MW)")
     ax.legend()
     ax.grid(True, alpha=0.3)
-    save_figure(fig, figures_dir, "日尺度重过载识别图.png")
+    save_figure(fig, figures_dir, "daily_heavy_overload_detection.png")
 
     # Monthly overload plot
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(monthly_vs_yearly["month_period"], monthly_vs_yearly["monthly_average"], marker="o", label="月平均负荷")
-    ax.plot(monthly_vs_yearly["month_period"], monthly_vs_yearly["threshold"], linestyle="--", label="年均值×1.3阈值")
+    ax.plot(monthly_vs_yearly["month_period"], monthly_vs_yearly["monthly_average"], marker="o", label="Monthly Average Load")
+    ax.plot(monthly_vs_yearly["month_period"], monthly_vs_yearly["threshold"], linestyle="--", label="Yearly Mean × 1.3 Threshold")
     if not heavy_months.empty:
-        ax.scatter(heavy_months["month_period"], heavy_months["monthly_average"], color="red", s=40, label="重过载月份")
-    ax.set_title("月尺度重过载识别图")
-    ax.set_xlabel("月份")
-    ax.set_ylabel("负荷")
+        ax.scatter(heavy_months["month_period"], heavy_months["monthly_average"], color="red", s=40, label="Heavy Overload Months")
+    ax.set_title("Monthly Heavy Overload Detection")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Load (MW)")
     ax.tick_params(axis="x", rotation=45)
     ax.legend()
     ax.grid(True, alpha=0.3)
-    save_figure(fig, figures_dir, "月尺度重过载识别图.png")
+    save_figure(fig, figures_dir, "monthly_heavy_overload_detection.png")
 
     return heavy_days, heavy_months

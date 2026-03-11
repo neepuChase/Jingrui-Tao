@@ -1,4 +1,4 @@
-"""可视化通用工具。"""
+"""Common visualization utilities."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""仅基于 TCN 的预测流水线：IMF 自动选优 + 分解/未分解对比。"""
+"""TCN-only forecasting pipeline with IMF auto-selection."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _set_seed(seed: int) -> None:
 
 def _get_device() -> torch.device:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("使用设备:", device)
+    print("Using device:", device)
     if device.type == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(device)}")
     return device
@@ -70,7 +70,7 @@ def _train_single_series(series: np.ndarray, config: ForecastConfig, device: tor
 
     x_train, y_train = create_sequences(train_norm, config.lookback, config.horizon)
     if len(x_train) == 0:
-        raise ValueError("训练样本不足，请减小 lookback 或增加数据量。")
+        raise ValueError("Insufficient training samples. Reduce lookback or provide more data.")
 
     train_loader = build_dataloader(x_train, y_train, config.batch_size)
     model = _build_model(config, device)
@@ -100,7 +100,7 @@ def _train_single_series(series: np.ndarray, config: ForecastConfig, device: tor
     model.eval()
     x_test, y_test = create_sequences(test_norm, config.lookback, config.horizon)
     if len(x_test) == 0:
-        raise ValueError("测试样本不足，请增加数据量或减小 lookback/horizon。")
+        raise ValueError("Insufficient test samples. Increase data size or reduce lookback/horizon.")
 
     x_tensor = torch.from_numpy(x_test).unsqueeze(-1).to(device)
     with torch.no_grad():
@@ -139,7 +139,7 @@ def _forecast_by_components(
     strategy_name: str,
     device: torch.device,
 ) -> tuple[pd.DataFrame, dict[str, list[float]], dict[str, float], pd.Series]:
-    comp_cols = [c for c in component_df.columns if c != "时间戳"]
+    comp_cols = [c for c in component_df.columns if c != "timestamp"]
     comp_values = component_df[comp_cols].values
 
     all_true, all_pred = [], []
@@ -159,13 +159,13 @@ def _forecast_by_components(
 
     forecast_df = pd.DataFrame(
         {
-            "时间戳": timestamps_test.values,
-            "真实负荷": true_reconstructed,
-            "预测负荷": pred_reconstructed,
-            "误差": true_reconstructed - pred_reconstructed,
+            "timestamp": timestamps_test.values,
+            "actual_load": true_reconstructed,
+            "predicted_load": pred_reconstructed,
+            "error": true_reconstructed - pred_reconstructed,
         }
     )
-    forecast_df.to_csv(outputs_dir / f"TCN预测结果_{strategy_name}.csv", index=False, encoding="utf-8-sig")
+    forecast_df.to_csv(outputs_dir / f"tcn_forecast_{strategy_name}.csv", index=False, encoding="utf-8-sig")
     metrics = calculate_metrics(true_reconstructed, pred_reconstructed)
     return forecast_df, all_losses, metrics, timestamps_test
 
@@ -176,40 +176,22 @@ def _build_k_component_df(cleaned_df: pd.DataFrame, imf_df: pd.DataFrame, k: int
     selected = imf_df[imf_cols[:k]].copy()
     original = cleaned_df["load"].values
     remainder = original - selected.sum(axis=1).values
-    selected[f"剩余分量(k={k})"] = remainder
-    selected.insert(0, "时间戳", imf_df["时间戳"].values)
+    selected[f"remainder_component(k={k})"] = remainder
+    selected.insert(0, "timestamp", imf_df["timestamp"].values)
     return selected
 
 
 def _plot_imf_k_comparison(df: pd.DataFrame, figures_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(df["IMF分量数"], df["RMSE"], marker="o", label="RMSE")
-    ax.plot(df["IMF分量数"], df["MAE"], marker="s", label="MAE")
-    ax.plot(df["IMF分量数"], df["MAPE"], marker="^", label="MAPE")
-    ax.set_title("IMF分量数选择效果对比图")
-    ax.set_xlabel("IMF分量数")
-    ax.set_ylabel("指标值")
+    ax.plot(df["num_imf_components"], df["RMSE"], marker="o", label="RMSE")
+    ax.plot(df["num_imf_components"], df["MAE"], marker="s", label="MAE")
+    ax.plot(df["num_imf_components"], df["MAPE"], marker="^", label="MAPE")
+    ax.set_title("IMF Component Count Selection Comparison")
+    ax.set_xlabel("Number of IMF Components")
+    ax.set_ylabel("Metric Value")
     ax.legend()
     ax.grid(True, alpha=0.3)
-    save_figure(fig, figures_dir, "IMF分量数选择对比图.png")
-
-
-def _plot_strategy_comparison(df: pd.DataFrame, figures_dir: Path) -> None:
-    fig, ax = plt.subplots(figsize=(10, 5))
-    x = np.arange(len(df))
-    width = 0.2
-    ax.bar(x - 1.5 * width, df["MAE"], width=width, label="MAE")
-    ax.bar(x - 0.5 * width, df["RMSE"], width=width, label="RMSE")
-    ax.bar(x + 0.5 * width, df["MAPE"], width=width, label="MAPE")
-    ax.bar(x + 1.5 * width, df["R2"], width=width, label="R2")
-    ax.set_xticks(x)
-    ax.set_xticklabels(df["方案"])
-    ax.set_title("分解与未分解预测效果对比图")
-    ax.set_xlabel("预测方案")
-    ax.set_ylabel("指标值")
-    ax.legend()
-    ax.grid(True, axis="y", alpha=0.3)
-    save_figure(fig, figures_dir, "分解与未分解效果对比图.png")
+    save_figure(fig, figures_dir, "imf_component_count_selection_comparison.png")
 
 
 def run_tcn_forecast_comparison(
@@ -224,22 +206,22 @@ def run_tcn_forecast_comparison(
     torch.backends.cudnn.benchmark = True
     device = _get_device()
 
-    # A. 未分解预测
-    undecomposed_df = pd.DataFrame({"时间戳": cleaned_df["timestamp"], "原始负荷": cleaned_df["load"]})
-    un_forecast, _, un_metrics, ts = _forecast_by_components(cleaned_df, undecomposed_df, cfg, outputs_dir, "未分解", device)
-    print("未分解预测指标:", un_metrics)
+    # A. Non-decomposed forecasting
+    undecomposed_df = pd.DataFrame({"timestamp": cleaned_df["timestamp"], "raw_load": cleaned_df["load"]})
+    un_forecast, _, un_metrics, ts = _forecast_by_components(cleaned_df, undecomposed_df, cfg, outputs_dir, "non_decomposed", device)
+    print("Non-decomposed forecast metrics:", un_metrics)
 
-    # B. IMF分量数选择
+    # B. IMF component count selection
     imf_cols = [c for c in imf_df.columns if c.startswith("IMF")]
     max_k = len(imf_cols)
     candidate_rows = []
     best = None
 
     for k in range(1, max_k + 1):
-        print(f"当前测试的IMF分量数: {k}")
+        print(f"Testing IMF component count: {k}")
         comp_df = _build_k_component_df(cleaned_df, imf_df, k)
-        _, _, metrics, _ = _forecast_by_components(cleaned_df, comp_df, cfg, outputs_dir, f"EMD分解_k{k}", device)
-        row = {"IMF分量数": k, **metrics}
+        _, _, metrics, _ = _forecast_by_components(cleaned_df, comp_df, cfg, outputs_dir, f"emd_decomposed_k{k}", device)
+        row = {"num_imf_components": k, **metrics}
         candidate_rows.append(row)
 
         score = (metrics["RMSE"], metrics["MAE"], metrics["MAPE"])
@@ -247,44 +229,44 @@ def run_tcn_forecast_comparison(
             best = (score, k, metrics)
 
     select_df = pd.DataFrame(candidate_rows)
-    select_df.to_csv(outputs_dir / "IMF分量数选择结果.csv", index=False, encoding="utf-8-sig")
+    select_df.to_csv(outputs_dir / "imf_component_count_selection_results.csv", index=False, encoding="utf-8-sig")
     _plot_imf_k_comparison(select_df, figures_dir)
 
     best_k = int(best[1]) if best else 1
-    (outputs_dir / "最优IMF分量数.txt").write_text(str(best_k), encoding="utf-8")
-    print("最优IMF分量数:", best_k)
+    (outputs_dir / "best_imf_component_count.txt").write_text(str(best_k), encoding="utf-8")
+    print("Best IMF component count:", best_k)
 
     best_comp_df = _build_k_component_df(cleaned_df, imf_df, best_k)
-    de_forecast, _, de_metrics, _ = _forecast_by_components(cleaned_df, best_comp_df, cfg, outputs_dir, "EMD分解", device)
-    print("分解预测指标:", de_metrics)
+    de_forecast, _, de_metrics, _ = _forecast_by_components(cleaned_df, best_comp_df, cfg, outputs_dir, "emd_decomposed", device)
+    print("Decomposed forecast metrics:", de_metrics)
 
     compare_df = pd.DataFrame(
         [
-            {"方案": "未分解TCN预测", **un_metrics},
-            {"方案": f"EMD分解TCN预测(k={best_k})", **de_metrics},
+            {"strategy": "Non-decomposed TCN Forecast", **un_metrics},
+            {"strategy": f"EMD-decomposed TCN Forecast (k={best_k})", **de_metrics},
         ]
     )
-    compare_df.to_csv(outputs_dir / "分解与未分解预测对比.csv", index=False, encoding="utf-8-sig")
-    _plot_strategy_comparison(compare_df, figures_dir)
+    compare_df.to_csv(outputs_dir / "decomposition_vs_non_decomposition_comparison.csv", index=False, encoding="utf-8-sig")
+    
 
     if (de_metrics["RMSE"], de_metrics["MAE"], de_metrics["MAPE"]) < (un_metrics["RMSE"], un_metrics["MAE"], un_metrics["MAPE"]):
-        best_strategy = "EMD分解后TCN预测"
+        best_strategy = "TCN Forecast After EMD Decomposition"
         final_forecast = de_forecast
         final_metrics = de_metrics
     else:
-        best_strategy = "未分解TCN预测"
+        best_strategy = "Non-decomposed TCN Forecast"
         final_forecast = un_forecast
         final_metrics = un_metrics
 
-    print("最优预测方案:", best_strategy)
-    (outputs_dir / "最优预测方案.txt").write_text(best_strategy, encoding="utf-8")
-    final_forecast.to_csv(outputs_dir / "预测结果.csv", index=False, encoding="utf-8-sig")
-    save_metrics(final_metrics, outputs_dir, filename="预测指标.csv")
+    print("Best forecast strategy:", best_strategy)
+    (outputs_dir / "best_forecast_strategy.txt").write_text(best_strategy, encoding="utf-8")
+    final_forecast.to_csv(outputs_dir / "forecast_results.csv", index=False, encoding="utf-8-sig")
+    save_metrics(final_metrics, outputs_dir, filename="forecast_metrics.csv")
 
     import json
-    with (outputs_dir / "预测指标.json").open("w", encoding="utf-8") as f:
+    with (outputs_dir / "forecast_metrics.json").open("w", encoding="utf-8") as f:
         json.dump(final_metrics, f, ensure_ascii=False, indent=2)
 
-    plot_forecast_results(ts, final_forecast["真实负荷"].values, final_forecast["预测负荷"].values, figures_dir)
+    plot_forecast_results(ts, final_forecast["actual_load"].values, final_forecast["predicted_load"].values, figures_dir)
     generate_error_analysis_outputs(final_forecast, outputs_dir, figures_dir)
     return final_metrics

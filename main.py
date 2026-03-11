@@ -1,4 +1,4 @@
-"""项目主入口。"""
+"""Project entry point."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from src.visualization import configure_style
 
 
 def save_quality_report(report: dict, output_path: Path) -> None:
-    quality_df = pd.DataFrame({"指标": list(report.keys()), "数值": list(report.values())})
+    quality_df = pd.DataFrame({"metric": list(report.keys()), "value": list(report.values())})
     quality_df.to_csv(output_path, index=False, encoding="utf-8-sig")
 
 
@@ -33,7 +33,7 @@ def main() -> None:
     configure_style()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("使用设备:", device)
+    print("Using device:", device)
     if device.type == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(device)}")
 
@@ -42,35 +42,35 @@ def main() -> None:
 
     inferred = infer_timestamp_and_load_columns(raw_df)
     cleaned_df, quality = clean_load_data(raw_df, inferred.timestamp_col, inferred.load_col)
-    save_dataframe(cleaned_df, outputs_dir / "清洗后数据.csv")
-    save_quality_report(quality, outputs_dir / "数据质量报告.csv")
+    save_dataframe(cleaned_df, outputs_dir / "cleaned_data.csv")
+    save_quality_report(quality, outputs_dir / "data_quality_report.csv")
 
     metadata = pd.DataFrame(
         {
-            "字段": ["数据集路径", "编码", "时间列", "负荷列"],
-            "取值": [str(dataset_path.relative_to(repo_root)), encoding, inferred.timestamp_col, inferred.load_col],
+            "field": ["dataset_path", "encoding", "timestamp_column", "load_column"],
+            "value": [str(dataset_path.relative_to(repo_root)), encoding, inferred.timestamp_col, inferred.load_col],
         }
     )
-    metadata.to_csv(outputs_dir / "数据集元信息.csv", index=False, encoding="utf-8-sig")
+    metadata.to_csv(outputs_dir / "dataset_metadata.csv", index=False, encoding="utf-8-sig")
 
-    basic_stats_df = basic_statistics(cleaned_df).rename(columns={"metric": "指标", "value": "数值"})
-    save_dataframe(basic_stats_df, outputs_dir / "基础统计结果.csv")
+    basic_stats_df = basic_statistics(cleaned_df)
+    save_dataframe(basic_stats_df, outputs_dir / "basic_statistics.csv")
 
     scale_tables = compute_time_scale_tables(cleaned_df)
     for name, table in scale_tables.items():
-        save_dataframe(table, outputs_dir / f"{name}统计结果.csv")
+        save_dataframe(table, outputs_dir / f"{name}_statistics.csv")
 
     monthly_vol_df = monthly_volatility(cleaned_df).rename(
         columns={
-            "year": "年份",
-            "month": "月份",
-            "monthly_mean": "月均负荷",
-            "monthly_std": "月标准差",
-            "monthly_var": "月方差",
-            "monthly_cv": "月变异系数",
+            "year": "year",
+            "month": "month",
+            "monthly_mean": "monthly_mean",
+            "monthly_std": "monthly_std",
+            "monthly_var": "monthly_var",
+            "monthly_cv": "monthly_cv",
         }
     )
-    save_dataframe(monthly_vol_df, outputs_dir / "月度波动性结果.csv")
+    save_dataframe(monthly_vol_df, outputs_dir / "monthly_volatility_statistics.csv")
 
     create_required_time_scale_figures(cleaned_df, figures_dir)
     create_season_figures(cleaned_df, figures_dir)
@@ -94,15 +94,15 @@ def main() -> None:
     )
     metrics = run_tcn_forecast_comparison(cleaned_df, imf_df, outputs_dir, figures_dir, forecast_config)
 
-    print("\n=== 数据质量报告 ===")
+    print("\n=== Data Quality Report ===")
     for k, v in quality.items():
         print(f"{k}: {v}")
 
-    print("\n=== 预测指标 ===")
+    print("\n=== Forecast Metrics ===")
     for metric_name, metric_value in metrics.items():
         print(f"{metric_name}: {metric_value:.6f}")
 
-    print("\n流程完成：读取数据 → 清洗 → 特性分析 → EMD(最多10个IMF) → IMF自动选择 → TCN预测 → 分解/未分解对比 → 自动选优")
+    print("\nPipeline completed: load data → clean → feature analysis → EMD (up to 10 IMF) → IMF auto-selection → TCN forecast → decomposition/non-decomposition comparison → auto-select best.")
 
 
 if __name__ == "__main__":
