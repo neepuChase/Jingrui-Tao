@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import pandas as pd
@@ -18,7 +19,32 @@ from src.time_scale_analysis import compute_time_scale_tables, create_required_t
 from src.visualization import configure_style
 
 
-IMF_COMPONENTS = 3
+def _validate_imf_components(value: int) -> int:
+    if not 1 <= value <= 10:
+        raise ValueError("IMF 分解个数必须在 1-10 之间")
+    return value
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="电力负荷分析与 TCN 预测")
+    parser.add_argument(
+        "--imf-components",
+        type=int,
+        help="指定 IMF 分解个数（1-10）。若未提供则会在终端中提示输入。",
+    )
+    return parser.parse_args()
+
+
+def prompt_imf_components(cli_value: int | None) -> int:
+    if cli_value is not None:
+        return _validate_imf_components(cli_value)
+
+    while True:
+        user_input = input("请输入 IMF 分解个数（1-10）: ").strip()
+        try:
+            return _validate_imf_components(int(user_input))
+        except ValueError:
+            print("输入无效，请输入 1 到 10 之间的整数。")
 
 
 def save_quality_report(report: dict, output_path: Path) -> None:
@@ -27,6 +53,7 @@ def save_quality_report(report: dict, output_path: Path) -> None:
 
 
 def main() -> None:
+    args = parse_args()
     repo_root = Path(__file__).resolve().parent
     figures_dir = repo_root / "figures"
     outputs_dir = repo_root / "outputs"
@@ -35,9 +62,8 @@ def main() -> None:
 
     configure_style()
 
-    if not 1 <= IMF_COMPONENTS <= 10:
-        raise ValueError("IMF_COMPONENTS 必须在 1-10 之间")
-    print(f"使用 IMF 分量数: {IMF_COMPONENTS}")
+    imf_components = prompt_imf_components(args.imf_components)
+    print(f"使用 IMF 分量数: {imf_components}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
@@ -98,7 +124,7 @@ def main() -> None:
         batch_size=128,
         random_seed=42,
         horizon=96,
-        imf_components=IMF_COMPONENTS,
+        imf_components=imf_components,
     )
     metrics = run_tcn_forecast_comparison(cleaned_df, imf_df, outputs_dir, figures_dir, forecast_config)
 
