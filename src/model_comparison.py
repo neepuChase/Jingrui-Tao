@@ -26,6 +26,15 @@ def compute_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.nanmean(np.abs((y_true - y_pred) / denominator)) * 100)
 
 
+def add_frequency_fusion_result(
+    results: dict[str, tuple[np.ndarray, np.ndarray]],
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    results["FREQ_FUSION"] = (np.asarray(y_true, dtype=float), np.asarray(y_pred, dtype=float))
+    return results
+
+
 def compare_and_select_model(
     results: dict[str, tuple[np.ndarray, np.ndarray]],
     outputs_dir: Path,
