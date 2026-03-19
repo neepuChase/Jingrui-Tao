@@ -19,7 +19,6 @@ from src.emd_decomposition import (
     save_imfs,
 )
 from src.forecast_pipeline import ForecastConfig, run_tcn_forecast_comparison
-from src.overload_analysis import analyze_heavy_overload
 from src.preprocess import clean_load_data, infer_timestamp_and_load_columns
 from src.season_analysis import create_season_figures, create_statistical_character_figures
 from src.statistics_analysis import basic_statistics, create_difference_and_correlation_figures, monthly_volatility, save_dataframe
@@ -117,7 +116,6 @@ def main() -> None:
     create_season_figures(cleaned_df, figures_dir)
     create_statistical_character_figures(cleaned_df, figures_dir, outputs_dir)
     create_difference_and_correlation_figures(cleaned_df, figures_dir)
-    analyze_heavy_overload(cleaned_df, outputs_dir, figures_dir)
 
     imfs = perform_emd(cleaned_df["load"], max_imf=MAX_IMF)
     timestamps = pd.to_datetime(cleaned_df["timestamp"])

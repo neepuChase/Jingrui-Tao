@@ -57,21 +57,7 @@
 
 ---
 
-## 3. 重过载识别图
-
-### `daily_heavy_overload_detection.png`
-**英文名称：Daily Heavy Overload Detection**
-
-中文说明：日尺度重过载识别图。该图将每日平均负荷与“当月平均负荷 × 1.3”的阈值进行对比，并标出超过阈值的日期。它主要用于识别在日尺度上明显偏高的重负荷日。
-
-### `monthly_heavy_overload_detection.png`
-**英文名称：Monthly Heavy Overload Detection**
-
-中文说明：月尺度重过载识别图。该图将每个月平均负荷与“当年平均负荷 × 1.3”的阈值进行对比，并高亮超过阈值的月份。它适合用来识别全年中负荷显著偏高的重点月份。
-
----
-
-## 4. EMD 分解结果图
+## 3. EMD 分解结果图
 
 ### `emd_decomposition_overview.png`
 **英文名称：EMD Decomposition Overview**
@@ -85,7 +71,7 @@
 
 ---
 
-## 5. 预测效果图
+## 4. 预测效果图
 
 ### `actual_vs_predicted_load.png`
 **英文名称：Actual vs Predicted Load**
@@ -99,7 +85,7 @@
 
 ---
 
-## 6. 分场景误差分析图
+## 5. 分场景误差分析图
 
 ### `peak_period_error.png`
 **英文名称：Peak Period Error**
@@ -128,7 +114,7 @@
 
 ---
 
-## 7. 可选的模型对比图
+## 6. 可选的模型对比图
 
 ### `27_model_comparison_bar.png`
 **英文名称：Model Comparison (Lower is Better)**
@@ -137,7 +123,7 @@
 
 ---
 
-## 8. 推荐阅读顺序
+## 7. 推荐阅读顺序
 
 如果你想快速理解程序输出的图片，建议按下面顺序查看：
 
@@ -148,13 +134,12 @@
 5. `actual_vs_predicted_load.png`、`prediction_error_distribution.png`：检查预测是否准确；
 6. `peak_period_error.png`、`valley_period_error.png`、`holiday_prediction_error.png`、`error_qq_plot.png`：最后分析模型在不同场景下的误差特征。
 
-## 9. 与代码的对应关系
+## 8. 与代码的对应关系
 
 这些图片主要由以下模块生成：
 
 - `src/time_scale_analysis.py`：基础时间尺度图；
 - `src/season_analysis.py`：季节与统计特征图；
-- `src/overload_analysis.py`：重过载识别图；
 - `src/emd_decomposition.py`：EMD 分解图；
 - `src/evaluation.py`：预测效果图与误差分析图；
 - `src/model_comparison.py`：可选的模型对比柱状图。
