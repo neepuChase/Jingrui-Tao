@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import pandas as pd
 
-from src.visualization import save_figure
 
 
 def analyze_heavy_overload(cleaned_df: pd.DataFrame, outputs_dir: Path, figures_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -34,32 +32,5 @@ def analyze_heavy_overload(cleaned_df: pd.DataFrame, outputs_dir: Path, figures_
 
     heavy_months = monthly_vs_yearly[monthly_vs_yearly["is_heavy_overload"]].copy()
     heavy_months.to_csv(outputs_dir / "heavy_overload_month_detection_results.csv", index=False, encoding="utf-8-sig")
-
-    # Daily overload plot
-    fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(pd.to_datetime(daily_df["day"]), daily_df["daily_load"], label="Daily Average Load", linewidth=1)
-    ax.plot(pd.to_datetime(daily_df["day"]), daily_df["threshold"], label="Monthly Mean × 1.3 Threshold", linestyle="--")
-    if not heavy_days.empty:
-        ax.scatter(pd.to_datetime(heavy_days["day"]), heavy_days["daily_load"], color="red", s=16, label="Heavy Overload Days")
-    ax.set_title("Daily Heavy Overload Detection")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Load (MW)")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    save_figure(fig, figures_dir, "daily_heavy_overload_detection.png")
-
-    # Monthly overload plot
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(monthly_vs_yearly["month_period"], monthly_vs_yearly["monthly_average"], marker="o", label="Monthly Average Load")
-    ax.plot(monthly_vs_yearly["month_period"], monthly_vs_yearly["threshold"], linestyle="--", label="Yearly Mean × 1.3 Threshold")
-    if not heavy_months.empty:
-        ax.scatter(heavy_months["month_period"], heavy_months["monthly_average"], color="red", s=40, label="Heavy Overload Months")
-    ax.set_title("Monthly Heavy Overload Detection")
-    ax.set_xlabel("Month")
-    ax.set_ylabel("Load (MW)")
-    ax.tick_params(axis="x", rotation=45)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    save_figure(fig, figures_dir, "monthly_heavy_overload_detection.png")
 
     return heavy_days, heavy_months
