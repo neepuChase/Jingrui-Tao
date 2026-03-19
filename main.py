@@ -11,6 +11,7 @@ import torch
 from src.data_loader import choose_primary_dataset, load_csv_robust
 from src.emd_decomposition import (
     MAX_IMF,
+    classify_imfs_by_frequency,
     create_imf_analysis_figures,
     perform_emd,
     plot_emd_overview,
@@ -119,6 +120,16 @@ def main() -> None:
     analyze_heavy_overload(cleaned_df, outputs_dir, figures_dir)
 
     imfs = perform_emd(cleaned_df["load"], max_imf=MAX_IMF)
+    timestamps = pd.to_datetime(cleaned_df["timestamp"])
+    sampling_interval = 1.0
+    diffs = timestamps.sort_values().diff().dropna()
+    if not diffs.empty:
+        step_seconds = diffs.dt.total_seconds().median()
+        if pd.notna(step_seconds) and step_seconds > 0:
+            sampling_interval = float(step_seconds / 3600.0)
+
+    classification = classify_imfs_by_frequency(imfs, sampling_interval=sampling_interval)
+    classification["features"].to_csv(outputs_dir / "imf_frequency_features.csv", index=False, encoding="utf-8-sig")
     imf_df = save_imfs(imfs, cleaned_df["timestamp"], outputs_dir)
     plot_emd_overview(cleaned_df["load"], imfs, figures_dir)
     plot_imf_components(imf_df, figures_dir)
@@ -134,6 +145,7 @@ def main() -> None:
         random_seed=42,
         horizon=96,
         imf_components=imf_components,
+        imf_groups={key: classification[key] for key in ("high", "mid", "low")},
     )
     metrics = run_tcn_forecast_comparison(cleaned_df, imf_df, outputs_dir, figures_dir, forecast_config)
 

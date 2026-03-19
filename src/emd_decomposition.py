@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from PyEMD import EMD
 
 from src.visualization import save_figure
@@ -66,6 +67,51 @@ def plot_imf_components(imf_df: pd.DataFrame, figures_dir: Path) -> None:
     save_figure(fig, figures_dir, "imf_components.png")
 
 
+def classify_imfs_by_frequency(imfs: list[np.ndarray] | np.ndarray, sampling_interval: float = 1.0) -> dict[str, object]:
+    """Classify IMFs by dominant frequency using FFT thresholding."""
+    imf_array = np.asarray(imfs, dtype=float)
+    features = []
+    groups = {"high": [], "mid": [], "low": []}
+
+    if imf_array.size == 0:
+        empty_df = pd.DataFrame(columns=["index", "dominant_freq", "energy"])
+        return {**groups, "features": empty_df}
+
+    if imf_array.ndim == 1:
+        imf_array = imf_array[np.newaxis, :]
+
+    safe_sampling_interval = sampling_interval if sampling_interval and sampling_interval > 0 else 1.0
+
+    for idx, imf in enumerate(imf_array, start=1):
+        signal = np.asarray(imf, dtype=float)
+        n = signal.size
+        energy = float(np.sum(np.square(signal)))
+
+        dominant_freq = 0.0
+        if n > 0:
+            centered = signal - np.mean(signal)
+            fft_values = np.fft.fft(centered)
+            frequencies = np.fft.fftfreq(n, d=safe_sampling_interval)
+            positive_mask = frequencies > 0
+            positive_freqs = frequencies[positive_mask]
+            amplitude = np.abs(fft_values[positive_mask])
+            if positive_freqs.size > 0 and amplitude.size > 0:
+                dominant_freq = float(positive_freqs[int(np.argmax(amplitude))])
+
+        feature = {"index": idx, "dominant_freq": dominant_freq, "energy": energy}
+        features.append(feature)
+
+        if dominant_freq > 0.1:
+            groups["high"].append(idx)
+        elif dominant_freq > 0.02:
+            groups["mid"].append(idx)
+        else:
+            groups["low"].append(idx)
+
+    features_df = pd.DataFrame(features, columns=["index", "dominant_freq", "energy"])
+    return {**groups, "features": features_df}
+
+
 def create_imf_analysis_figures(load_df: pd.DataFrame, imfs: np.ndarray, figures_dir: Path) -> None:
     """Create IMF spectrum, energy, reconstruction, and volatility figures."""
     if imfs.size == 0:
@@ -73,8 +119,10 @@ def create_imf_analysis_figures(load_df: pd.DataFrame, imfs: np.ndarray, figures
 
     timestamps = pd.to_datetime(load_df["timestamp"])
     sampling_hours = _infer_sampling_hours(timestamps)
+    classification = classify_imfs_by_frequency(imfs, sampling_interval=sampling_hours)
     _plot_imf_spectrum_overview(imfs, sampling_hours, figures_dir)
-    _plot_imf_energy_ratio(imfs, figures_dir)
+    _plot_imf_frequency_classification(classification, figures_dir)
+    _plot_imf_energy_ratio(classification["features"], figures_dir)
     _plot_imf_reconstruction(load_df["load"].to_numpy(), imfs, timestamps, figures_dir)
     _plot_imf_volatility_decomposition(imfs, figures_dir)
 
@@ -118,16 +166,45 @@ def _plot_imf_spectrum_overview(imfs: np.ndarray, sampling_hours: float, figures
     save_figure(fig, figures_dir, "imf_spectrum_overview.png")
 
 
-def _plot_imf_energy_ratio(imfs: np.ndarray, figures_dir: Path) -> None:
-    energies = np.sum(np.square(imfs), axis=1)
-    total_energy = energies.sum()
-    ratios = energies / total_energy if total_energy else np.zeros_like(energies)
-    labels = [f"IMF{i + 1}" for i in range(imfs.shape[0])]
+def _plot_imf_frequency_classification(classification: dict[str, object], figures_dir: Path) -> None:
+    features = classification["features"]
+    if features.empty:
+        return
+
+    plot_df = features.copy()
+    plot_df["category"] = "low"
+    plot_df.loc[plot_df["index"].isin(classification["mid"]), "category"] = "mid"
+    plot_df.loc[plot_df["index"].isin(classification["high"]), "category"] = "high"
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.bar(labels, ratios, color="tab:cyan")
+    sns.barplot(
+        data=plot_df,
+        x="index",
+        y="dominant_freq",
+        hue="category",
+        dodge=False,
+        palette={"high": "tab:red", "mid": "tab:orange", "low": "tab:green"},
+        ax=ax,
+    )
+    ax.set_title("IMF Frequency Classification")
+    ax.set_xlabel("IMF Index")
+    ax.set_ylabel("Dominant Frequency")
+    ax.grid(True, axis="y", alpha=0.3)
+    save_figure(fig, figures_dir, "imf_frequency_classification.png")
+
+
+def _plot_imf_energy_ratio(features: pd.DataFrame, figures_dir: Path) -> None:
+    if features.empty:
+        return
+
+    plot_df = features.copy()
+    total_energy = float(plot_df["energy"].sum())
+    plot_df["energy_ratio"] = plot_df["energy"] / total_energy if total_energy else 0.0
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.barplot(data=plot_df, x="index", y="energy_ratio", color="tab:cyan", ax=ax)
     ax.set_title("IMF Energy Contribution Ratio")
-    ax.set_xlabel("IMF Component")
+    ax.set_xlabel("IMF Index")
     ax.set_ylabel("Energy Ratio")
     ax.grid(True, axis="y", alpha=0.3)
     save_figure(fig, figures_dir, "imf_energy_ratio.png")
