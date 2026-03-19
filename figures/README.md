@@ -76,7 +76,7 @@
 ### `actual_vs_predicted_load.png`
 **英文名称：Actual vs Predicted Load**
 
-中文说明：真实值与预测值对比图。该图在同一时间轴上绘制实际负荷与预测负荷，是衡量预测模型整体拟合效果最直接的一张图。两条曲线越接近，说明模型对负荷变化趋势和波动细节的刻画越好。
+中文说明：真实值与预测值对比图。程序生成这张图时会先在终端中提示输入日期（YYYY-MM-DD），随后只输出该日期对应的一天实际负荷与预测负荷对比曲线。两条曲线越接近，说明模型对该日负荷变化趋势和波动细节的刻画越好。
 
 ### `prediction_error_distribution.png`
 **英文名称：Prediction Error Distribution**

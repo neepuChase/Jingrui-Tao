@@ -461,7 +461,7 @@ def run_tcn_forecast_comparison(
     device = _get_device()
 
     undecomposed_df = pd.DataFrame({"timestamp": cleaned_df["timestamp"], "raw_load": cleaned_df["load"]})
-    un_forecast, _, un_metrics, ts = _forecast_by_components(cleaned_df, undecomposed_df, cfg, outputs_dir, "non_decomposed", device)
+    un_forecast, _, un_metrics, _ = _forecast_by_components(cleaned_df, undecomposed_df, cfg, outputs_dir, "non_decomposed", device)
     print("Non-decomposed forecast metrics:", un_metrics)
 
     component_df = _build_k_component_df(cleaned_df, imf_df, cfg.imf_components)
@@ -547,6 +547,6 @@ def run_tcn_forecast_comparison(
     with (outputs_dir / "forecast_metrics.json").open("w", encoding="utf-8") as f:
         json.dump(final_metrics, f, ensure_ascii=False, indent=2)
 
-    plot_forecast_results(ts, final_forecast["actual_load"].values, final_forecast["predicted_load"].values, figures_dir)
+    plot_forecast_results(final_forecast["timestamp"], final_forecast["actual_load"].values, final_forecast["predicted_load"].values, figures_dir)
     generate_error_analysis_outputs(final_forecast, outputs_dir, figures_dir)
     return final_metrics

@@ -34,6 +34,26 @@ def save_metrics(metrics: dict[str, float], outputs_dir: Path, filename: str = "
     return metrics_df
 
 
+def _prompt_plot_date(timestamps: pd.Series) -> pd.Timestamp:
+    normalized_dates = pd.to_datetime(timestamps).dt.normalize()
+    available_dates = pd.Index(normalized_dates.unique()).sort_values()
+    start_date = available_dates.min().strftime("%Y-%m-%d")
+    end_date = available_dates.max().strftime("%Y-%m-%d")
+
+    while True:
+        user_input = input(f"请输入要生成预测对比图的日期（YYYY-MM-DD，范围 {start_date} ~ {end_date}）: ").strip()
+        try:
+            selected_date = pd.Timestamp(user_input).normalize()
+        except ValueError:
+            print("日期格式无效，请按 YYYY-MM-DD 重新输入。")
+            continue
+
+        if selected_date in available_dates:
+            return selected_date
+
+        print("该日期不在预测结果范围内，请重新输入。")
+
+
 def plot_forecast_results(
     timestamps: pd.Series,
     y_true: np.ndarray,
@@ -41,12 +61,22 @@ def plot_forecast_results(
     figures_dir: Path,
     title_suffix: str = "",
 ) -> None:
+    timestamps = pd.to_datetime(pd.Series(timestamps).reset_index(drop=True))
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
     error = y_true - y_pred
 
+    selected_date = _prompt_plot_date(timestamps)
+    day_mask = timestamps.dt.normalize() == selected_date
+    day_timestamps = timestamps.loc[day_mask]
+    day_true = y_true[day_mask.to_numpy()]
+    day_pred = y_pred[day_mask.to_numpy()]
+    date_label = selected_date.strftime("%Y-%m-%d")
+
     fig, ax = plt.subplots(figsize=(14, 6), dpi=300)
-    ax.plot(timestamps, y_true, label="Actual Load", linewidth=1.0)
-    ax.plot(timestamps, y_pred, label="Predicted Load", linewidth=1.0)
-    ax.set_title(f"Actual vs Predicted Load{title_suffix}")
+    ax.plot(day_timestamps, day_true, label="Actual Load", linewidth=1.0)
+    ax.plot(day_timestamps, day_pred, label="Predicted Load", linewidth=1.0)
+    ax.set_title(f"Actual vs Predicted Load ({date_label}){title_suffix}")
     ax.set_xlabel("Time")
     ax.set_ylabel("Load (MW)")
     ax.legend()
