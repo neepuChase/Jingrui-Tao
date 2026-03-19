@@ -6,7 +6,7 @@
 - 时间列 / 负荷列自动推断；
 - 数据清洗与质量报告；
 - 多时间尺度统计分析；
-- 季节性、相关性、频域与重过载识别；
+- 季节性、相关性与频域分析；
 - EMD（经验模态分解）分解与 IMF 频率分层；
 - 多种预测策略对比；
 - 误差评估、最佳策略选择与图表输出。
@@ -53,7 +53,7 @@
 → 时间列/负荷列自动推断
 → 数据清洗与质量报告
 → 基础统计与多时间尺度分析
-→ 季节性 / 相关性 / 频域 / 重过载分析
+→ 季节性 / 相关性 / 频域分析
 → EMD 分解
 → IMF 频率特征提取与分组
 → 多策略预测与比较
@@ -213,16 +213,7 @@
 - 相关性热力图；
 - FFT 频谱图。
 
-### 3.7 重过载识别
-
-当前实现定义了两类重过载识别：
-
-1. **日尺度重过载**：日均负荷 > 当月平均负荷 × 1.3
-2. **月尺度重过载**：月均负荷 > 当年平均负荷 × 1.3
-
-结果会以 CSV 形式保存，便于后续排查重点日期和重点月份。
-
-### 3.8 EMD 分解与 IMF 频率分析
+### 3.7 EMD 分解与 IMF 频率分析
 
 项目对清洗后的负荷序列执行 EMD 分解，并默认最多保留 `10` 个 IMF 分量。随后程序会：
 
@@ -233,7 +224,7 @@
 - 将 IMF 分为高频 / 中频 / 低频；
 - 输出频率分类、能量占比、重构分量等图像。
 
-### 3.9 预测评估与误差分析
+### 3.8 预测评估与误差分析
 
 对最终选中的最佳预测策略，程序会进一步生成：
 
@@ -264,7 +255,6 @@ Jingrui-Tao/
 │   ├── statistics_analysis.py     # 基础统计、差分、相关性与频域分析
 │   ├── time_scale_analysis.py     # 年/月/周/日/小时尺度分析
 │   ├── season_analysis.py         # 季节分析与统计特征图
-│   ├── overload_analysis.py       # 重过载识别
 │   ├── emd_decomposition.py       # EMD 分解、IMF 保存与可视化
 │   ├── lstm_dataset.py            # 序列样本构造与 DataLoader
 │   ├── lstm_model.py              # LSTM 预测模型
@@ -441,11 +431,6 @@ python main.py --imf-components 3
 - `hourly_statistics.csv`
 - `monthly_volatility_statistics.csv`
 - `daily_peak_valley_metrics.csv`
-
-#### 重过载识别类
-
-- `heavy_overload_day_detection_results.csv`
-- `heavy_overload_month_detection_results.csv`
 
 #### EMD 与 IMF 类
 
@@ -668,7 +653,6 @@ python main.py --imf-components 3
 - 多时间尺度分析；
 - 频域分析；
 - EMD 分解；
-- 重过载识别。
 
 ### Q5：最终统一输出的 `forecast_results.csv` 来自哪个模型？
 
