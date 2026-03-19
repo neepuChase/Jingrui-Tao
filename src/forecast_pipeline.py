@@ -318,7 +318,12 @@ def _train_single_series(series: np.ndarray, config: ForecastConfig, device: tor
         raise ValueError("Insufficient training samples. Reduce lookback or provide more data.")
 
     train_loader = build_dataloader(x_train, y_train, config.batch_size)
-    model = _build_model(config, device)
+    model = LSTMForecaster(
+        input_size=1,
+        hidden_size=64,
+        num_layers=2,
+        dropout=config.dropout
+    ).to(device)
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
@@ -510,7 +515,7 @@ def run_tcn_forecast_comparison(
         save_figure(fig, figures_dir, "freq_fusion_prediction.png")
 
     compare_rows = [
-        {"strategy": "Non-decomposed TCN Forecast", **un_metrics},
+        {"strategy": "Non-decomposed LSTM Forecast", **un_metrics},
         {"strategy": f"EMD-decomposed TCN Forecast (k={cfg.imf_components})", **de_metrics},
     ]
     if freq_metrics is not None:
@@ -521,7 +526,7 @@ def run_tcn_forecast_comparison(
     compare_and_select_model(results, outputs_dir, figures_dir)
 
     final_candidates = [
-        ("Non-decomposed TCN Forecast", un_forecast, un_metrics),
+        ("Non-decomposed LSTM Forecast", un_forecast, un_metrics),
         ("TCN Forecast After EMD Decomposition", de_forecast, de_metrics),
     ]
     if freq_metrics is not None:
