@@ -1,12 +1,20 @@
-pandas
-numpy
-matplotlib
-seaborn
-scipy
-statsmodels
-PyEMD
-# Install GPU-enabled PyTorch (CUDA 12.1) separately with:
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-scikit-learn
-holidays
-chinese-calendar
+# 电力负荷分析与预测项目依赖
+# 建议 Python 3.10+
+#
+# 默认包含 CPU 可运行版本的 PyTorch。
+# 如果你使用 NVIDIA GPU，并希望安装匹配 CUDA 的版本，
+# 可改为使用 PyTorch 官方提供的安装命令：
+# https://pytorch.org/get-started/locally/
+
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+seaborn>=0.12
+scipy>=1.10
+statsmodels>=0.14
+scikit-learn>=1.3
+PyEMD>=1.0.0
+holidays>=0.40
+chinese-calendar>=1.9
+
+torch>=2.2
