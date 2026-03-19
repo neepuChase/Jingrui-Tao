@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +29,7 @@ class ForecastConfig:
     tcn_kernel_size: int = 3
     horizon: int = 96
     imf_components: int = 3
+    imf_groups: dict[str, list[int]] = field(default_factory=dict)
 
 
 def _set_seed(seed: int) -> None:
@@ -169,6 +170,19 @@ def _forecast_by_components(
     return forecast_df, all_losses, metrics, timestamps_test
 
 
+def _build_group_component_df(imf_df: pd.DataFrame, groups: dict[str, list[int]]) -> pd.DataFrame:
+    component_df = pd.DataFrame({"timestamp": imf_df["timestamp"].values})
+    imf_cols = [c for c in imf_df.columns if c.startswith("IMF")]
+
+    for group_name in ("high", "mid", "low"):
+        indices = groups.get(group_name, [])
+        selected_cols = [imf_cols[idx - 1] for idx in indices if 1 <= idx <= len(imf_cols)]
+        if selected_cols:
+            component_df[f"{group_name}_group"] = imf_df[selected_cols].sum(axis=1)
+
+    return component_df
+
+
 def _build_k_component_df(cleaned_df: pd.DataFrame, imf_df: pd.DataFrame, k: int) -> pd.DataFrame:
     imf_cols = [c for c in imf_df.columns if c.startswith("IMF")]
     if not 1 <= k <= 10:
@@ -201,6 +215,10 @@ def run_tcn_forecast_comparison(
     print("Non-decomposed forecast metrics:", un_metrics)
 
     component_df = _build_k_component_df(cleaned_df, imf_df, cfg.imf_components)
+    if cfg.imf_groups:
+        grouped_component_df = _build_group_component_df(imf_df, cfg.imf_groups)
+        if len(grouped_component_df.columns) > 1:
+            component_df = grouped_component_df
     de_forecast, _, de_metrics, _ = _forecast_by_components(
         cleaned_df,
         component_df,
