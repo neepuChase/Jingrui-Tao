@@ -612,7 +612,7 @@ python main.py --imf-components 3
 4. 查看 `figures/raw_load_timeseries.png` 和 `figures/seasonal_load_analysis.png`；
 5. 查看 `outputs/decomposition_vs_non_decomposition_comparison.csv`；
 6. 查看 `outputs/best_forecast_strategy.txt` 与 `outputs/forecast_metrics.csv`；
-7. 最后查看 `figures/actual_vs_predicted_load.png` 与误差分析图。
+7. 生成 `figures/actual_vs_predicted_load.png` 时，终端会要求输入日期（YYYY-MM-DD），随后输出该日期对应的一天真实值与预测值对比图；最后再查看误差分析图。
 
 ---
 
