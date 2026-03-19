@@ -9,12 +9,19 @@ import pandas as pd
 import torch
 
 from src.data_loader import choose_primary_dataset, load_csv_robust
-from src.emd_decomposition import MAX_IMF, perform_emd, plot_emd_overview, plot_imf_components, save_imfs
+from src.emd_decomposition import (
+    MAX_IMF,
+    create_imf_analysis_figures,
+    perform_emd,
+    plot_emd_overview,
+    plot_imf_components,
+    save_imfs,
+)
 from src.forecast_pipeline import ForecastConfig, run_tcn_forecast_comparison
 from src.overload_analysis import analyze_heavy_overload
 from src.preprocess import clean_load_data, infer_timestamp_and_load_columns
 from src.season_analysis import create_season_figures, create_statistical_character_figures
-from src.statistics_analysis import basic_statistics, monthly_volatility, save_dataframe
+from src.statistics_analysis import basic_statistics, create_difference_and_correlation_figures, monthly_volatility, save_dataframe
 from src.time_scale_analysis import compute_time_scale_tables, create_required_time_scale_figures
 from src.visualization import configure_style
 
@@ -108,12 +115,14 @@ def main() -> None:
     create_required_time_scale_figures(cleaned_df, figures_dir)
     create_season_figures(cleaned_df, figures_dir)
     create_statistical_character_figures(cleaned_df, figures_dir, outputs_dir)
+    create_difference_and_correlation_figures(cleaned_df, figures_dir)
     analyze_heavy_overload(cleaned_df, outputs_dir, figures_dir)
 
     imfs = perform_emd(cleaned_df["load"], max_imf=MAX_IMF)
     imf_df = save_imfs(imfs, cleaned_df["timestamp"], outputs_dir)
     plot_emd_overview(cleaned_df["load"], imfs, figures_dir)
     plot_imf_components(imf_df, figures_dir)
+    create_imf_analysis_figures(cleaned_df, imfs, figures_dir)
 
     forecast_config = ForecastConfig(
         lookback=672,

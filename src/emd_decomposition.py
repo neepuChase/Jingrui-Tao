@@ -64,3 +64,107 @@ def plot_imf_components(imf_df: pd.DataFrame, figures_dir: Path) -> None:
     ax.grid(True, alpha=0.3)
     ax.legend(ncol=3, fontsize=8)
     save_figure(fig, figures_dir, "imf_components.png")
+
+
+def create_imf_analysis_figures(load_df: pd.DataFrame, imfs: np.ndarray, figures_dir: Path) -> None:
+    """Create IMF spectrum, energy, reconstruction, and volatility figures."""
+    if imfs.size == 0:
+        return
+
+    timestamps = pd.to_datetime(load_df["timestamp"])
+    sampling_hours = _infer_sampling_hours(timestamps)
+    _plot_imf_spectrum_overview(imfs, sampling_hours, figures_dir)
+    _plot_imf_energy_ratio(imfs, figures_dir)
+    _plot_imf_reconstruction(load_df["load"].to_numpy(), imfs, timestamps, figures_dir)
+    _plot_imf_volatility_decomposition(imfs, figures_dir)
+
+
+def _infer_sampling_hours(timestamps: pd.Series) -> float:
+    diffs = timestamps.sort_values().diff().dropna()
+    if diffs.empty:
+        return 1.0
+    step_seconds = diffs.dt.total_seconds().median()
+    if pd.isna(step_seconds) or step_seconds <= 0:
+        return 1.0
+    return step_seconds / 3600.0
+
+
+def _positive_fft(signal: np.ndarray, sampling_hours: float) -> tuple[np.ndarray, np.ndarray]:
+    centered = signal.astype(float) - np.mean(signal)
+    n = centered.size
+    if n == 0:
+        return np.array([]), np.array([])
+
+    fft_values = np.fft.fft(centered)
+    frequencies = np.fft.fftfreq(n, d=sampling_hours)
+    positive = frequencies > 0
+    return frequencies[positive], np.abs(fft_values[positive])
+
+
+def _plot_imf_spectrum_overview(imfs: np.ndarray, sampling_hours: float, figures_dir: Path) -> None:
+    n_imfs = imfs.shape[0]
+    fig, axes = plt.subplots(n_imfs, 1, figsize=(14, max(3 * n_imfs, 4)), sharex=True)
+    if n_imfs == 1:
+        axes = [axes]
+
+    for idx, ax in enumerate(axes):
+        frequencies, amplitude = _positive_fft(imfs[idx], sampling_hours)
+        ax.plot(frequencies, amplitude, linewidth=0.8, color="tab:blue")
+        ax.set_title(f"IMF{idx + 1} Spectrum")
+        ax.set_ylabel("Amplitude")
+        ax.grid(True, alpha=0.2)
+
+    axes[-1].set_xlabel("Frequency (cycles/hour)")
+    save_figure(fig, figures_dir, "imf_spectrum_overview.png")
+
+
+def _plot_imf_energy_ratio(imfs: np.ndarray, figures_dir: Path) -> None:
+    energies = np.sum(np.square(imfs), axis=1)
+    total_energy = energies.sum()
+    ratios = energies / total_energy if total_energy else np.zeros_like(energies)
+    labels = [f"IMF{i + 1}" for i in range(imfs.shape[0])]
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(labels, ratios, color="tab:cyan")
+    ax.set_title("IMF Energy Contribution Ratio")
+    ax.set_xlabel("IMF Component")
+    ax.set_ylabel("Energy Ratio")
+    ax.grid(True, axis="y", alpha=0.3)
+    save_figure(fig, figures_dir, "imf_energy_ratio.png")
+
+
+def _plot_imf_reconstruction(load: np.ndarray, imfs: np.ndarray, timestamps: pd.Series, figures_dir: Path) -> None:
+    high = imfs[0:2].sum(axis=0) if imfs.shape[0] >= 1 else np.zeros_like(load)
+    mid = imfs[2:4].sum(axis=0) if imfs.shape[0] >= 3 else np.zeros_like(load)
+    low = imfs[4:-1].sum(axis=0) if imfs.shape[0] >= 6 else np.zeros_like(load)
+    trend = imfs[-1] if imfs.shape[0] > 0 else np.zeros_like(load)
+
+    fig, axes = plt.subplots(5, 1, figsize=(14, 14), sharex=True)
+    series_map = [
+        (load, "Original Load", "black"),
+        (high, "High-Frequency Reconstruction (IMF1-2)", "tab:red"),
+        (mid, "Mid-Frequency Reconstruction (IMF3-4)", "tab:orange"),
+        (low, "Low-Frequency Reconstruction (IMF5+)", "tab:green"),
+        (trend, "Residual Trend", "tab:blue"),
+    ]
+
+    for ax, (series, title, color) in zip(axes, series_map):
+        ax.plot(timestamps, series, linewidth=0.8, color=color)
+        ax.set_title(title)
+        ax.grid(True, alpha=0.2)
+
+    axes[-1].set_xlabel("Time")
+    save_figure(fig, figures_dir, "imf_reconstruction.png")
+
+
+def _plot_imf_volatility_decomposition(imfs: np.ndarray, figures_dir: Path) -> None:
+    volatility = np.std(imfs, axis=1)
+    labels = [f"IMF{i + 1}" for i in range(imfs.shape[0])]
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(labels, volatility, color="tab:purple")
+    ax.set_title("IMF Volatility Decomposition")
+    ax.set_xlabel("IMF Component")
+    ax.set_ylabel("Standard Deviation")
+    ax.grid(True, axis="y", alpha=0.3)
+    save_figure(fig, figures_dir, "imf_volatility_decomposition.png")
