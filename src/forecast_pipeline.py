@@ -1,4 +1,4 @@
-"""TCN-only forecasting pipeline with user-defined IMF components."""
+"""Forecasting pipeline with multivariate sequence inputs and user-defined IMF components."""
 
 from __future__ import annotations
 
@@ -36,20 +36,18 @@ class ForecastConfig:
     imf_groups: dict[str, list[int]] = field(default_factory=dict)
 
 
-
-
 class _SCINetForecaster(nn.Module):
     """Lightweight SCINet-style placeholder for high-frequency forecasting."""
 
-    def __init__(self, hidden_size: int, horizon: int, dropout: float) -> None:
+    def __init__(self, input_size: int, hidden_size: int, horizon: int, dropout: float) -> None:
         super().__init__()
         self.branch_even = nn.Sequential(
-            nn.Conv1d(1, hidden_size, kernel_size=3, padding=1),
+            nn.Conv1d(input_size, hidden_size, kernel_size=3, padding=1),
             nn.GELU(),
             nn.Dropout(dropout),
         )
         self.branch_odd = nn.Sequential(
-            nn.Conv1d(1, hidden_size, kernel_size=5, padding=2),
+            nn.Conv1d(input_size, hidden_size, kernel_size=5, padding=2),
             nn.GELU(),
             nn.Dropout(dropout),
         )
@@ -73,9 +71,9 @@ class _SCINetForecaster(nn.Module):
 class _AutoformerForecaster(nn.Module):
     """Transformer-encoder placeholder used for low-frequency IMF forecasting."""
 
-    def __init__(self, hidden_size: int, horizon: int, dropout: float, num_layers: int = 2, nhead: int = 4) -> None:
+    def __init__(self, input_size: int, hidden_size: int, horizon: int, dropout: float, num_layers: int = 2, nhead: int = 4) -> None:
         super().__init__()
-        self.input_projection = nn.Linear(1, hidden_size)
+        self.input_projection = nn.Linear(input_size, hidden_size)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size,
             nhead=nhead,
@@ -133,7 +131,7 @@ class _TorchSequenceAdapter:
 
     def predict(self, x_test: np.ndarray) -> np.ndarray:
         self.model.eval()
-        x_tensor = torch.from_numpy(x_test).unsqueeze(-1).to(self.device)
+        x_tensor = torch.from_numpy(np.asarray(x_test, dtype=np.float32)).to(self.device)
         with torch.no_grad():
             with autocast(enabled=self.device.type == "cuda"):
                 predictions = self.model(x_tensor).detach().cpu().numpy()
@@ -148,61 +146,75 @@ def _resolve_imf_index(index: int, total_components: int) -> int | None:
     return None
 
 
-def _build_sequence_adapter(model_name: str, config: ForecastConfig, device: torch.device) -> _TorchSequenceAdapter:
-    if model_name == "SCINet":
-        model = _SCINetForecaster(hidden_size=64, horizon=config.horizon, dropout=config.dropout)
-    elif model_name == "TCN":
-        model = _build_model(config, device)
-    elif model_name == "Autoformer":
-        model = _AutoformerForecaster(hidden_size=64, horizon=config.horizon, dropout=config.dropout)
-    elif model_name == "TimeXer":
-        model = nn.Sequential(
-            LSTMForecaster(input_size=1, hidden_size=128, num_layers=2, dropout=config.dropout),
-            nn.Flatten(start_dim=1),
-            nn.Linear(1, config.horizon),
-        )
-    else:
-        raise ValueError(f"Unsupported model name: {model_name}")
-    return _TorchSequenceAdapter(model=model, config=config, device=device)
+def _select_multivariate_feature_columns(cleaned_df: pd.DataFrame) -> list[str]:
+    excluded = {"timestamp", "date", "weekday_name", "season"}
+    feature_cols: list[str] = []
+    for col in cleaned_df.columns:
+        if col in excluded:
+            continue
+        if pd.api.types.is_numeric_dtype(cleaned_df[col]):
+            feature_cols.append(col)
+    return feature_cols
 
 
-def _train_with_model_interface(
-    series: np.ndarray,
+def _assemble_feature_matrix(
+    cleaned_df: pd.DataFrame,
+    target_series: np.ndarray,
+    *,
+    include_load: bool,
+) -> np.ndarray:
+    feature_cols = _select_multivariate_feature_columns(cleaned_df)
+    base_df = cleaned_df[feature_cols].copy()
+    target_array = np.asarray(target_series, dtype=np.float32).reshape(-1)
+    base_df.insert(0, "target_signal", target_array)
+
+    if not include_load and "load" in base_df.columns:
+        base_df = base_df.drop(columns=["load"])
+
+    values = base_df.astype(np.float32).to_numpy(copy=True)
+    col_means = np.nanmean(values, axis=0)
+    col_means = np.where(np.isnan(col_means), 0.0, col_means)
+    nan_rows, nan_cols = np.where(np.isnan(values))
+    if len(nan_rows) > 0:
+        values[nan_rows, nan_cols] = col_means[nan_cols]
+    return values
+
+
+def _split_and_scale_features(
+    features: np.ndarray,
+    targets: np.ndarray,
     config: ForecastConfig,
-    device: torch.device,
-    model_name: str,
-) -> tuple[np.ndarray, np.ndarray, list[float]]:
-    n = len(series)
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float, int]:
+    n = len(targets)
     split_idx = max(int(n * config.train_ratio), config.lookback + config.horizon)
+    if split_idx >= n:
+        raise ValueError("Insufficient samples for forecasting. Reduce lookback/horizon or provide more data.")
 
-    train_series = series[:split_idx]
-    test_series = series[split_idx - config.lookback :]
+    train_features = features[:split_idx]
+    test_features = features[split_idx - config.lookback :]
+    train_targets = targets[:split_idx]
+    test_targets = targets[split_idx - config.lookback :]
 
-    mean = float(np.mean(train_series))
-    std = float(np.std(train_series)) + 1e-8
+    feature_mean = train_features.mean(axis=0)
+    feature_std = train_features.std(axis=0) + 1e-8
+    feature_std[feature_std < 1e-8] = 1.0
 
-    train_norm = (train_series - mean) / std
-    test_norm = (test_series - mean) / std
+    train_norm = (train_features - feature_mean) / feature_std
+    test_norm = (test_features - feature_mean) / feature_std
 
-    x_train, y_train = create_sequences(train_norm, config.lookback, config.horizon)
-    x_test, y_test = create_sequences(test_norm, config.lookback, config.horizon)
-    if len(x_train) == 0 or len(x_test) == 0:
-        raise ValueError("Insufficient samples for frequency-based forecasting. Reduce lookback/horizon or provide more data.")
+    target_mean = float(np.mean(train_targets))
+    target_std = float(np.std(train_targets)) + 1e-8
 
-    adapter = _build_sequence_adapter(model_name, config, device)
-    loss_history = adapter.train_model(x_train, y_train)
-    preds_test = adapter.predict(x_test)
+    return train_norm, test_norm, train_targets, test_targets, target_mean, target_std, split_idx
 
-    preds_test = preds_test * std + mean
-    y_test = y_test * std + mean
 
-    total_len = n - split_idx
+def _aggregate_horizon_predictions(preds_test: np.ndarray, y_test: np.ndarray, total_len: int, horizon: int) -> tuple[np.ndarray, np.ndarray]:
     pred_sum = np.zeros(total_len, dtype=np.float64)
     pred_count = np.zeros(total_len, dtype=np.int32)
     true_values = np.zeros(total_len, dtype=np.float64)
 
     for i in range(len(preds_test)):
-        for h in range(config.horizon):
+        for h in range(horizon):
             target_idx = i + h
             if target_idx >= total_len:
                 continue
@@ -213,10 +225,60 @@ def _train_with_model_interface(
     valid_mask = pred_count > 0
     y_pred = (pred_sum[valid_mask] / pred_count[valid_mask]).astype(np.float64)
     y_true = true_values[valid_mask].astype(np.float64)
+    return y_true, y_pred
+
+
+def _build_sequence_adapter(model_name: str, config: ForecastConfig, device: torch.device, input_size: int) -> _TorchSequenceAdapter:
+    if model_name == "SCINet":
+        model = _SCINetForecaster(input_size=input_size, hidden_size=64, horizon=config.horizon, dropout=config.dropout)
+    elif model_name == "TCN":
+        model = _build_model(config, device, input_channels=input_size)
+    elif model_name == "Autoformer":
+        model = _AutoformerForecaster(input_size=input_size, hidden_size=64, horizon=config.horizon, dropout=config.dropout)
+    elif model_name == "TimeXer":
+        model = LSTMForecaster(
+            input_size=input_size,
+            hidden_size=128,
+            num_layers=2,
+            dropout=config.dropout,
+            output_size=config.horizon,
+        )
+    else:
+        raise ValueError(f"Unsupported model name: {model_name}")
+    return _TorchSequenceAdapter(model=model, config=config, device=device)
+
+
+def _train_with_model_interface(
+    features: np.ndarray,
+    targets: np.ndarray,
+    config: ForecastConfig,
+    device: torch.device,
+    model_name: str,
+) -> tuple[np.ndarray, np.ndarray, list[float]]:
+    train_norm, test_norm, train_targets, test_targets, target_mean, target_std, split_idx = _split_and_scale_features(features, targets, config)
+
+    y_train_norm = (train_targets - target_mean) / target_std
+    y_test_norm = (test_targets - target_mean) / target_std
+
+    x_train, y_train = create_sequences(train_norm, y_train_norm, lookback=config.lookback, horizon=config.horizon)
+    x_test, y_test = create_sequences(test_norm, y_test_norm, lookback=config.lookback, horizon=config.horizon)
+    if len(x_train) == 0 or len(x_test) == 0:
+        raise ValueError("Insufficient samples for frequency-based forecasting. Reduce lookback/horizon or provide more data.")
+
+    adapter = _build_sequence_adapter(model_name, config, device, input_size=x_train.shape[-1])
+    loss_history = adapter.train_model(x_train, y_train)
+    preds_test = adapter.predict(x_test)
+
+    preds_test = preds_test * target_std + target_mean
+    y_test = y_test * target_std + target_mean
+
+    total_len = len(targets) - split_idx
+    y_true, y_pred = _aggregate_horizon_predictions(preds_test, y_test, total_len, config.horizon)
     return y_true, y_pred, loss_history
 
 
 def forecast_with_frequency_models(
+    cleaned_df: pd.DataFrame,
     imfs: list[np.ndarray],
     classification: dict,
     config: ForecastConfig,
@@ -249,7 +311,8 @@ def forecast_with_frequency_models(
 
         for component_index in resolved_indices:
             used_indices.add(component_index)
-            y_true, y_pred, _ = _train_with_model_interface(imf_array[component_index], config, device, model_name)
+            features = _assemble_feature_matrix(cleaned_df, imf_array[component_index], include_load=False)
+            y_true, y_pred, _ = _train_with_model_interface(features, imf_array[component_index], config, device, model_name)
             if isinstance(pred_total, int):
                 pred_total = np.zeros_like(y_pred, dtype=np.float64)
                 true_total = np.zeros_like(y_true, dtype=np.float64)
@@ -259,7 +322,8 @@ def forecast_with_frequency_models(
             pred_total += y_pred[:common_length]
             true_total += y_true[:common_length]
 
-    trend_true, trend_pred, _ = _train_with_model_interface(imf_array[trend_index], config, device, "TimeXer")
+    trend_features = _assemble_feature_matrix(cleaned_df, imf_array[trend_index], include_load=False)
+    trend_true, trend_pred, _ = _train_with_model_interface(trend_features, imf_array[trend_index], config, device, "TimeXer")
     if isinstance(pred_total, int):
         pred_total = np.zeros_like(trend_pred, dtype=np.float64)
         true_total = np.zeros_like(trend_true, dtype=np.float64)
@@ -269,7 +333,8 @@ def forecast_with_frequency_models(
 
     unused_indices = [idx for idx in range(total_components - 1) if idx not in used_indices]
     for component_index in unused_indices:
-        y_true, y_pred, _ = _train_with_model_interface(imf_array[component_index], config, device, "TCN")
+        features = _assemble_feature_matrix(cleaned_df, imf_array[component_index], include_load=False)
+        y_true, y_pred, _ = _train_with_model_interface(features, imf_array[component_index], config, device, "TCN")
         common_length = min(len(pred_total), len(y_pred))
         pred_total = np.asarray(pred_total[:common_length], dtype=np.float64) + y_pred[:common_length]
         true_total = np.asarray(true_total[:common_length], dtype=np.float64) + y_true[:common_length]
@@ -290,9 +355,9 @@ def _get_device() -> torch.device:
     return device
 
 
-def _build_model(config: ForecastConfig, device: torch.device) -> nn.Module:
+def _build_model(config: ForecastConfig, device: torch.device, input_channels: int = 1) -> nn.Module:
     return TCNForecaster(
-        input_channels=1,
+        input_channels=input_channels,
         channels=list(config.tcn_channels),
         kernel_size=config.tcn_kernel_size,
         dropout=config.dropout,
@@ -300,29 +365,32 @@ def _build_model(config: ForecastConfig, device: torch.device) -> nn.Module:
     ).to(device)
 
 
-def _train_single_series(series: np.ndarray, config: ForecastConfig, device: torch.device) -> tuple[np.ndarray, np.ndarray, list[float]]:
-    n = len(series)
-    split_idx = max(int(n * config.train_ratio), config.lookback + config.horizon)
+def _train_single_series(
+    target_series: np.ndarray,
+    feature_matrix: np.ndarray,
+    config: ForecastConfig,
+    device: torch.device,
+) -> tuple[np.ndarray, np.ndarray, list[float]]:
+    train_norm, test_norm, train_targets, test_targets, target_mean, target_std, split_idx = _split_and_scale_features(
+        feature_matrix,
+        np.asarray(target_series, dtype=np.float32).reshape(-1),
+        config,
+    )
 
-    train_series = series[:split_idx]
-    test_series = series[split_idx - config.lookback :]
+    y_train_norm = (train_targets - target_mean) / target_std
+    y_test_norm = (test_targets - target_mean) / target_std
 
-    mean = float(np.mean(train_series))
-    std = float(np.std(train_series)) + 1e-8
-
-    train_norm = (train_series - mean) / std
-    test_norm = (test_series - mean) / std
-
-    x_train, y_train = create_sequences(train_norm, config.lookback, config.horizon)
+    x_train, y_train = create_sequences(train_norm, y_train_norm, lookback=config.lookback, horizon=config.horizon)
     if len(x_train) == 0:
         raise ValueError("Insufficient training samples. Reduce lookback or provide more data.")
 
     train_loader = build_dataloader(x_train, y_train, config.batch_size)
     model = LSTMForecaster(
-        input_size=1,
+        input_size=x_train.shape[-1],
         hidden_size=64,
         num_layers=2,
-        dropout=config.dropout
+        dropout=config.dropout,
+        output_size=config.horizon,
     ).to(device)
 
     criterion = nn.MSELoss()
@@ -348,36 +416,20 @@ def _train_single_series(series: np.ndarray, config: ForecastConfig, device: tor
         loss_history.append(epoch_loss / max(1, len(train_loader)))
 
     model.eval()
-    x_test, y_test = create_sequences(test_norm, config.lookback, config.horizon)
+    x_test, y_test = create_sequences(test_norm, y_test_norm, lookback=config.lookback, horizon=config.horizon)
     if len(x_test) == 0:
         raise ValueError("Insufficient test samples. Increase data size or reduce lookback/horizon.")
 
-    x_tensor = torch.from_numpy(x_test).unsqueeze(-1).to(device)
+    x_tensor = torch.from_numpy(np.asarray(x_test, dtype=np.float32)).to(device)
     with torch.no_grad():
         with autocast(enabled=device.type == "cuda"):
             preds_test = model(x_tensor).detach().cpu().numpy()
 
-    preds_test = preds_test * std + mean
-    y_test = y_test * std + mean
+    preds_test = preds_test * target_std + target_mean
+    y_test = y_test * target_std + target_mean
 
-    horizon = config.horizon
-    total_len = n - split_idx
-    pred_sum = np.zeros(total_len, dtype=np.float64)
-    pred_count = np.zeros(total_len, dtype=np.int32)
-    true_values = np.zeros(total_len, dtype=np.float64)
-
-    for i in range(len(preds_test)):
-        for h in range(horizon):
-            target_idx = i + h
-            if target_idx >= total_len:
-                continue
-            pred_sum[target_idx] += float(preds_test[i, h])
-            pred_count[target_idx] += 1
-            true_values[target_idx] = float(y_test[i, h])
-
-    valid_mask = pred_count > 0
-    y_pred = (pred_sum[valid_mask] / pred_count[valid_mask]).astype(np.float64)
-    y_true = true_values[valid_mask].astype(np.float64)
+    total_len = len(target_series) - split_idx
+    y_true, y_pred = _aggregate_horizon_predictions(preds_test, y_test, total_len, config.horizon)
     return y_true, y_pred, loss_history
 
 
@@ -396,7 +448,9 @@ def _forecast_by_components(
     all_losses: dict[str, list[float]] = {}
 
     for i, col in enumerate(comp_cols):
-        y_true_i, y_pred_i, loss_history = _train_single_series(comp_values[:, i], config, device)
+        include_load = col == "raw_load"
+        feature_matrix = _assemble_feature_matrix(cleaned_df, comp_values[:, i], include_load=include_load)
+        y_true_i, y_pred_i, loss_history = _train_single_series(comp_values[:, i], feature_matrix, config, device)
         all_true.append(y_true_i)
         all_pred.append(y_pred_i)
         all_losses[col] = loss_history
@@ -420,7 +474,7 @@ def _forecast_by_components(
     return forecast_df, all_losses, metrics, timestamps_test
 
 
-def _build_group_component_df(imf_df: pd.DataFrame, groups: dict[str, list[int]]) -> pd.DataFrame:
+def _build_group_component_df(cleaned_df: pd.DataFrame, imf_df: pd.DataFrame, groups: dict[str, list[int]]) -> pd.DataFrame:
     component_df = pd.DataFrame({"timestamp": imf_df["timestamp"].values})
     imf_cols = [c for c in imf_df.columns if c.startswith("IMF")]
 
@@ -429,6 +483,11 @@ def _build_group_component_df(imf_df: pd.DataFrame, groups: dict[str, list[int]]
         selected_cols = [imf_cols[idx - 1] for idx in indices if 1 <= idx <= len(imf_cols)]
         if selected_cols:
             component_df[f"{group_name}_group"] = imf_df[selected_cols].sum(axis=1)
+
+    used_cols = [c for c in component_df.columns if c != "timestamp"]
+    if used_cols:
+        remainder = cleaned_df["load"].values - component_df[used_cols].sum(axis=1).values
+        component_df["remainder_component"] = remainder
 
     return component_df
 
@@ -466,7 +525,7 @@ def run_tcn_forecast_comparison(
 
     component_df = _build_k_component_df(cleaned_df, imf_df, cfg.imf_components)
     if cfg.imf_groups:
-        grouped_component_df = _build_group_component_df(imf_df, cfg.imf_groups)
+        grouped_component_df = _build_group_component_df(cleaned_df, imf_df, cfg.imf_groups)
         if len(grouped_component_df.columns) > 1:
             component_df = grouped_component_df
     de_forecast, _, de_metrics, _ = _forecast_by_components(
@@ -485,6 +544,7 @@ def run_tcn_forecast_comparison(
     }
 
     freq_true, freq_pred = forecast_with_frequency_models(
+        cleaned_df=cleaned_df,
         imfs=[imf_df[col].to_numpy() for col in imf_df.columns if col.startswith("IMF")],
         classification=cfg.imf_groups,
         config=cfg,
