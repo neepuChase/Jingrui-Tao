@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import torch
 from torch import nn
-
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class LSTMForecaster(nn.Module):
@@ -29,7 +25,6 @@ class LSTMForecaster(nn.Module):
             dropout=dropout if num_layers > 1 else 0.0,
         )
         self.head = nn.Linear(hidden_size, output_size)
-        self.to(DEVICE)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         output, _ = self.lstm(x)
