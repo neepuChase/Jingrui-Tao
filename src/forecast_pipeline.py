@@ -28,6 +28,7 @@ class ForecastConfig:
     learning_rate: float = 1e-3
     epochs: int = 20
     batch_size: int = 128
+    eval_batch_size: int = 32
     random_seed: int = 42
     tcn_channels: tuple[int, ...] = (32, 32, 32)
     tcn_kernel_size: int = 3
@@ -131,11 +132,22 @@ class _TorchSequenceAdapter:
 
     def predict(self, x_test: np.ndarray) -> np.ndarray:
         self.model.eval()
-        x_tensor = torch.from_numpy(np.asarray(x_test, dtype=np.float32)).to(self.device)
-        with torch.no_grad():
-            with autocast(enabled=self.device.type == "cuda"):
-                predictions = self.model(x_tensor).detach().cpu().numpy()
-        return predictions
+        x_array = np.asarray(x_test, dtype=np.float32)
+        if len(x_array) == 0:
+            return np.empty((0, self.config.horizon), dtype=np.float32)
+
+        outputs: list[np.ndarray] = []
+        batch_size = max(1, self.config.eval_batch_size)
+        with torch.inference_mode():
+            for start in range(0, len(x_array), batch_size):
+                batch = torch.from_numpy(x_array[start : start + batch_size]).to(self.device, non_blocking=self.device.type == "cuda")
+                with autocast(enabled=self.device.type == "cuda"):
+                    batch_pred = self.model(batch)
+                outputs.append(batch_pred.detach().cpu().numpy())
+                del batch, batch_pred
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        return np.concatenate(outputs, axis=0)
 
 
 def _resolve_imf_index(index: int, total_components: int) -> int | None:
@@ -420,10 +432,22 @@ def _train_single_series(
     if len(x_test) == 0:
         raise ValueError("Insufficient test samples. Increase data size or reduce lookback/horizon.")
 
-    x_tensor = torch.from_numpy(np.asarray(x_test, dtype=np.float32)).to(device)
-    with torch.no_grad():
-        with autocast(enabled=device.type == "cuda"):
-            preds_test = model(x_tensor).detach().cpu().numpy()
+    x_test_array = np.asarray(x_test, dtype=np.float32)
+    eval_batch_size = max(1, config.eval_batch_size)
+    pred_batches: list[np.ndarray] = []
+    with torch.inference_mode():
+        for start in range(0, len(x_test_array), eval_batch_size):
+            x_batch = torch.from_numpy(x_test_array[start : start + eval_batch_size]).to(
+                device,
+                non_blocking=device.type == "cuda",
+            )
+            with autocast(enabled=device.type == "cuda"):
+                batch_pred = model(x_batch)
+            pred_batches.append(batch_pred.detach().cpu().numpy())
+            del x_batch, batch_pred
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    preds_test = np.concatenate(pred_batches, axis=0)
 
     preds_test = preds_test * target_std + target_mean
     y_test = y_test * target_std + target_mean

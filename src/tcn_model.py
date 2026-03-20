@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import torch
 from torch import nn
-
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Chomp1d(nn.Module):
@@ -79,7 +75,6 @@ class TCNForecaster(nn.Module):
 
         self.network = nn.Sequential(*layers)
         self.regressor = nn.Linear(channels[-1], output_size)
-        self.to(DEVICE)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Input shape: [batch, seq_len, features], output: [batch, horizon]."""
