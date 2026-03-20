@@ -152,15 +152,19 @@ def clean_load_data(raw_df: pd.DataFrame, timestamp_col: str, load_col: str) -> 
         numeric_cols = [c for c in df.columns if c != "timestamp"]
         df = df.groupby("timestamp", as_index=False)[numeric_cols].mean()
 
+    interpolation_index = pd.DatetimeIndex(df["timestamp"])
+
     if df["load"].isna().any():
-        df["load"] = df["load"].interpolate(method="time", limit_direction="both")
-        df["load"] = df["load"].ffill().bfill()
+        load_series = pd.Series(df["load"].to_numpy(), index=interpolation_index)
+        load_series = load_series.interpolate(method="time", limit_direction="both")
+        df["load"] = load_series.ffill().bfill().to_numpy()
 
     missing_feature_total = 0
     for col in feature_cols:
         if df[col].isna().any():
-            df[col] = df[col].interpolate(method="time", limit_direction="both")
-            df[col] = df[col].ffill().bfill()
+            feature_series = pd.Series(df[col].to_numpy(), index=interpolation_index)
+            feature_series = feature_series.interpolate(method="time", limit_direction="both")
+            df[col] = feature_series.ffill().bfill().to_numpy()
         missing_feature_total += int(df[col].isna().sum())
 
     quality_report["remaining_missing_load"] = int(df["load"].isna().sum())
