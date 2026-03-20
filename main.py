@@ -18,7 +18,7 @@ from src.emd_decomposition import (
     plot_imf_components,
     save_imfs,
 )
-from src.forecast_pipeline import ForecastConfig, run_tcn_forecast_comparison
+from src.forecast_pipeline import ForecastConfig, run_emd_model_comparison
 from src.preprocess import clean_load_data, infer_timestamp_and_load_columns
 from src.season_analysis import create_season_figures, create_statistical_character_figures
 from src.statistics_analysis import basic_statistics, create_difference_and_correlation_figures, monthly_volatility, save_dataframe
@@ -33,7 +33,7 @@ def _validate_imf_components(value: int) -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="电力负荷分析与 TCN 预测")
+    parser = argparse.ArgumentParser(description="电力负荷分析与 EMD 组合模型预测")
     parser.add_argument(
         "--imf-components",
         type=int,
@@ -145,7 +145,7 @@ def main() -> None:
         imf_components=imf_components,
         imf_groups={key: classification[key] for key in ("high", "mid", "low")},
     )
-    metrics = run_tcn_forecast_comparison(cleaned_df, imf_df, outputs_dir, figures_dir, forecast_config)
+    metrics = run_emd_model_comparison(cleaned_df, imf_df, outputs_dir, figures_dir, forecast_config)
 
     print("\n=== Data Quality Report ===")
     for k, v in quality.items():
@@ -155,7 +155,7 @@ def main() -> None:
     for metric_name, metric_value in metrics.items():
         print(f"{metric_name}: {metric_value:.6f}")
 
-    print("\nPipeline completed: load data → clean → feature analysis → EMD (up to 10 IMF) → user-defined IMF decomposition forecast → decomposition/non-decomposition comparison.")
+    print("\nPipeline completed: load data → clean → feature analysis → EMD (up to 10 IMF) → EMD+LSTM/SCINet/iTransformer/TimeXer forecasting → best-model selection.")
 
 
 if __name__ == "__main__":

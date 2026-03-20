@@ -41,13 +41,14 @@
 → 输出最终预测结果与误差分析
 ```
 
-从代码上看，仓库包含三类预测逻辑：
+从代码上看，仓库当前聚焦 **EMD 分解后的组合预测**：
 
-1. **未分解基线预测**：对原始负荷序列联合天气/时间特征做多变量 LSTM 预测；
-2. **EMD 分解后的重构预测**：将 IMF 分量重组后，结合共享外生特征逐分量预测，再求和重构；
-3. **频率融合预测**：将 IMF 按主频分为高频 / 中频 / 低频，并映射到不同模型进行多变量融合预测。
+1. **EMD+LSTM**：对选定 IMF 分量及余项分别做 LSTM 预测，再求和重构；
+2. **EMD+SCINet**：对同一组分量使用轻量 SCINet 风格结构预测；
+3. **EMD+iTransformer**：对同一组分量使用轻量 iTransformer 风格结构预测；
+4. **EMD+TimeXer**：对同一组分量使用轻量 TimeXer 风格结构预测。
 
-最终程序会基于误差指标自动选择最佳方案，并将该方案的结果写入统一输出文件。  
+最终程序会对以上四种 EMD 组合模型按误差指标进行比较，自动输出最优方案及其统一结果文件。  
 
 ---
 
@@ -70,7 +71,6 @@
     ├── emd_decomposition.py    # EMD 分解、IMF 频率分类与可视化
     ├── lstm_dataset.py         # 序列样本构造与 DataLoader
     ├── lstm_model.py           # LSTM 预测模型
-    ├── tcn_model.py            # TCN 预测模型
     ├── model_comparison.py     # 模型指标比较与最佳模型记录
     ├── evaluation.py           # 指标计算、预测图与误差分析
     ├── forecast_pipeline.py    # 预测主流程与策略对比
@@ -237,85 +237,45 @@
 
 ## 7. 预测部分说明
 
-这是本仓库最重要、也最容易误读的部分。
+当前版本中，负荷预测模块只保留 4 条 EMD 组合模型路径：
 
-### 7.1 未分解预测：LSTM 基线
+- **EMD+LSTM**
+- **EMD+SCINet**
+- **EMD+iTransformer**
+- **EMD+TimeXer**
 
-在 `run_tcn_forecast_comparison()` 中，程序首先构造仅包含原始负荷的单列数据，然后调用 `_forecast_by_components()`。而 `_forecast_by_components()` 内部实际使用的是 `LSTMForecaster`。
+它们共享同一套预测流程：
 
-也就是说，当前实现中的“未分解预测”本质上是：
+1. 先执行 EMD 分解；
+2. 根据 `--imf-components` 选择前 `k` 个 IMF；
+3. 用原始负荷减去这 `k` 个 IMF 之和，构造 `remainder_component`；
+4. 对每个分量分别训练同一种模型；
+5. 将各分量预测值相加，重构总负荷预测结果；
+6. 按 `RMSE → MAE → MAPE` 的优先顺序比较四种模型，输出最优解。
 
-> **对原始负荷序列直接做 LSTM 多步预测。**
+需要注意：
 
-在输出汇总中，该方案会显示为：
+- 当前仓库中的 `SCINet`、`iTransformer`、`TimeXer` 为**轻量接口实现**，用于完成统一的 EMD 组合对比流程；
+- 如果你后续希望替换成更严格的论文版或你自己的源码实现，可以继续在现有接口基础上替换模型主体；
+- 统一输出文件始终对应本次运行中误差最优的那一个 EMD 组合模型，而不是固定某一种模型。
 
-- `Non-decomposed LSTM Forecast`
+当前主要输出包括：
 
-### 7.2 EMD 分解后预测
-
-程序会先执行 EMD 分解，最多保留 10 个 IMF 分量。之后根据 `--imf-components` 的取值，选取前 `k` 个 IMF 分量，并将原始序列减去这 `k` 个 IMF 之和，构造一个 `remainder_component`。
-
-随后，程序会对这些分量分别训练预测模型，再把各分量预测值相加得到重构结果。
-
-需要特别注意：
-
-- 如果提供了 IMF 频率分组信息，代码会优先把 IMF 合并成 `high_group`、`mid_group`、`low_group` 三个组，再进行分组重构预测；
-- 这意味着“EMD 分解后预测”不一定严格等于“前 k 个 IMF + remainder”的逐列预测，实际行为会受到分组信息影响。
-
-在输出汇总中，该方案会显示为：
-
-- `EMD-decomposed TCN Forecast (k=<k值>)`
-- 最终选择阶段中也可能被记作 `TCN Forecast After EMD Decomposition`
-
-虽然命名中出现了 `TCN`，但当前分量重构路径内部仍调用的是 `_train_single_series()`，该函数用的是 `LSTMForecaster`。因此应理解为：
-
-> **当前代码的命名保留了 TCN 历史痕迹，但分量级重构预测核心实现实际仍是 LSTM。**
-
-### 7.3 频率融合预测
-
-程序还实现了一个额外的“频率融合预测”分支：
-
-- 高频 IMF → `SCINet` 风格轻量模型；
-- 中频 IMF → `TCN`；
-- 低频 IMF → `Autoformer` 风格编码器；
-- 趋势项 → `TimeXer` 名义下的 LSTM 适配结构；
-- 未被分组使用的 IMF → 回退到 `TCN`。
-
-这里要注意两点：
-
-1. `SCINet`、`Autoformer`、`TimeXer` 在当前仓库中是**轻量占位式实现 / 近似接口**，不是这些论文模型的完整复现版本；
-2. 频率融合预测依赖 IMF 分组结果，如果分组信息为空或样本不足，相关分支可能无法得到有效输出。
-
-在输出汇总中，该方案会显示为：
-
-- `Frequency Fusion Forecast`
-
-### 7.4 最终如何选“最佳策略”
-
-程序会将以下候选方案进行比较：
-
-- 未分解 LSTM 预测；
-- EMD 分解后的重构预测；
-- 频率融合预测（若成功生成）。
-
-最终按以下优先级选择最佳方案：
-
-1. 先比较 `RMSE`；
-2. 若相同，再比较 `MAE`；
-3. 若仍相同，再比较 `MAPE`。
-
-统一的最终结果会写入：
-
+- `outputs/emd_lstm_forecast.csv`
+- `outputs/emd_scinet_forecast.csv`
+- `outputs/emd_itransformer_forecast.csv`
+- `outputs/emd_timexer_forecast.csv`
+- `outputs/emd_model_metrics.csv`
+- `outputs/model_comparison.csv`
+- `outputs/best_model.txt`
 - `outputs/best_forecast_strategy.txt`
 - `outputs/forecast_results.csv`
 - `outputs/forecast_metrics.csv`
 - `outputs/forecast_metrics.json`
 
-因此：
+因此，`forecast_results.csv` 和 `forecast_metrics.*` 代表的是：
 
-> 这几个统一输出文件代表的是**本次运行误差最优的策略结果**，而不固定属于某一个模型名称。
-
----
+> **四种 EMD 组合模型中本次评估最优的最终结果。**
 
 ## 8. 运行方式
 
@@ -408,11 +368,11 @@ EMD 与 IMF 分析结果：
 
 预测与比较结果：
 
-- `tcn_forecast_non_decomposed.csv`：未分解预测结果；
-- `tcn_forecast_emd_decomposed_imf{k}.csv`：分解重构预测结果；
-- `TCN预测结果_IMF{k}.csv`：分解预测结果的中文命名副本；
-- `freq_fusion_forecast.csv`：频率融合预测结果（若成功生成）；
-- `decomposition_vs_non_decomposition_comparison.csv`：策略比较表；
+- `emd_lstm_forecast.csv`：EMD+LSTM 预测结果；
+- `emd_scinet_forecast.csv`：EMD+SCINet 预测结果；
+- `emd_itransformer_forecast.csv`：EMD+iTransformer 预测结果；
+- `emd_timexer_forecast.csv`：EMD+TimeXer 预测结果；
+- `emd_model_metrics.csv`：四种 EMD 组合模型指标汇总表；
 - `model_comparison.csv`：模型比较表；
 - `best_model.txt`：模型比较模块记录的最佳模型；
 - `best_forecast_strategy.txt`：最终统一输出采用的最佳策略；
