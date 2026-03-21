@@ -8,18 +8,42 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from PyEMD import EMD
+
+try:
+    from PyEMD import EMD  # type: ignore
+except ImportError:  # pragma: no cover
+    EMD = None
 
 from src.visualization import save_figure
 
 MAX_IMF = 10
 
 
+def _fallback_emd(values: np.ndarray, max_imf: int) -> np.ndarray:
+    windows = [4, 16, 48, 96, 192, 336, 672]
+    windows = windows[: max(1, max_imf - 1)]
+    residual = pd.Series(values.astype(float))
+    components: list[np.ndarray] = []
+
+    for window in windows:
+        if len(residual) <= window:
+            break
+        smooth = residual.rolling(window=window, center=True, min_periods=1).mean()
+        component = (residual - smooth).to_numpy(dtype=float)
+        components.append(component)
+        residual = smooth
+
+    components.append(residual.to_numpy(dtype=float))
+    return np.asarray(components[:max_imf], dtype=float)
+
+
 def perform_emd(load_series: pd.Series, max_imf: int = MAX_IMF) -> np.ndarray:
     """Run EMD on the load series and cap IMF count at max_imf."""
-    emd = EMD()
     values = load_series.astype(float).values
-    imfs = emd.emd(values)
+    if EMD is not None:
+        imfs = EMD().emd(values)
+    else:
+        imfs = _fallback_emd(values, max_imf=max_imf)
     if imfs.shape[0] > max_imf:
         imfs = imfs[:max_imf, :]
     return imfs

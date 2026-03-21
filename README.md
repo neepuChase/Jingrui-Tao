@@ -1,587 +1,319 @@
-# 电力负荷分析与预测项目
+# 轻量级多变量负荷分析与 EMD 预测项目
 
-一个面向**多变量电力负荷时间序列**的端到端分析仓库：自动发现 CSV 数据、识别时间列与负荷列，保留天气等数值字段并构造时间特征，完成清洗与统计分析、执行 EMD 分解，并对多种预测策略进行比较，最终输出统一的预测结果、误差指标与图表。
+## 1. 项目简介
+本项目面向电力负荷数据的**分析与预测一体化场景**，在现有轻量级代码框架上完成整理与重构，目标是提供一个能够**直接运行、结构清晰、终端交互明确、README 完整**的多变量负荷分析与预测项目。
 
-> 本 README 以**当前仓库代码实现**为准，而不是历史命名或旧文档。
+项目保留了原有负荷数据分析中的主要统计与图表逻辑，并将预测流程统一为：
 
----
+> **EMD 分解 → IMF 分量预测 → 融合重构输出**
 
-## 1. 项目定位
+项目不引入庞大的原版大模型库，而是使用轻量级可运行实现，便于快速实验与本地运行：
+- TCN：轻量时序卷积实现
+- LSTM：轻量多变量 LSTM
+- AutoFormer：轻量 Transformer Encoder 风格占位实现
+- SCINet：轻量 SCINet 风格占位实现
+- 混合预测：对每个 IMF 分量分别选择验证效果最优的模型后再融合
+- 最优预测：直接输出当前候选方案中表现最好的最终结果
 
-本项目围绕一类典型问题展开：
-
-- 输入：包含时间戳、负荷值以及可选天气/环境字段的 CSV 文件；
-- 目标：自动完成数据读取、清洗、统计分析、EMD 分解和负荷预测；
-- 输出：清洗后的数据表、统计结果、分析图、预测结果、误差分析结果，以及“最佳预测策略”的汇总文件。
-
-项目适合以下场景：
-
-- 电力负荷时间序列课程设计、毕业设计或科研原型；
-- 负荷数据分析流程的快速复现；
-- 比较“未分解预测”与“分解后预测”效果；
-- 产出一组较完整的、可直接用于报告展示的图表与 CSV 结果。
-
----
-
-## 2. 当前代码真实在做什么
-
-主程序入口是 `main.py`，执行顺序大致如下：
+## 2. 项目结构
 
 ```text
-自动发现 CSV
-→ 编码识别与读取
-→ 时间列/负荷列自动推断
-→ 数据清洗与质量报告
-→ 多时间尺度统计分析与绘图
-→ 季节性 / 差分 / 相关性 / 频域分析
-→ EMD 分解
-→ IMF 频率分类
-→ 预测策略对比
-→ 选择最优策略
-→ 输出最终预测结果与误差分析
+project_root/
+├─ main.py
+├─ README.md
+├─ requirements.txt
+├─ data/
+│  └─ quanzhou.csv
+├─ outputs/
+│  ├─ analysis/
+│  └─ forecast/
+└─ src/
+   ├─ analysis/
+   │  └─ load_analysis.py
+   ├─ forecast/
+   │  └─ load_forecasting.py
+   ├─ models/
+   │  └─ sequence_models.py
+   ├─ utils/
+   │  └─ time_selection.py
+   ├─ data_loader.py
+   ├─ preprocess.py
+   ├─ emd_decomposition.py
+   ├─ statistics_analysis.py
+   ├─ time_scale_analysis.py
+   ├─ season_analysis.py
+   ├─ lstm_dataset.py
+   ├─ lstm_model.py
+   ├─ tcn_model.py
+   ├─ evaluation.py
+   └─ visualization.py
 ```
 
-从代码上看，仓库当前聚焦 **EMD 分解后的组合预测**：
+## 3. 数据格式要求
+项目会自动识别时间列与负荷列，并尽量兼容中文列名。推荐数据至少包含以下字段：
 
-1. **EMD+LSTM**：对选定 IMF 分量及余项分别做 LSTM 预测，再求和重构；
-2. **EMD+SCINet**：对同一组分量使用轻量 SCINet 风格结构预测；
-3. **EMD+iTransformer**：对同一组分量使用轻量 iTransformer 风格结构预测；
-4. **EMD+TimeXer**：对同一组分量使用轻量 TimeXer 风格结构预测。
+- 时间列：如 `时间`、`timestamp`、`date` 等
+- 目标负荷列：如 `负荷`、`load`、`power`、`demand` 等
+- 其他数值特征：如温度、湿度、降雨量等
 
-最终程序会对以上四种 EMD 组合模型按误差指标进行比较，自动输出最优方案及其统一结果文件。  
+示例：
 
----
+| 时间 | 负荷 | 最高温度℃ | 最低温度℃ | 平均温度℃ | 相对湿度(平均) | 降雨量（mm） |
+|---|---:|---:|---:|---:|---:|---:|
+| 2018/1/1 0:00 | 4454.57 | 20.7 | 9.3 | 14.3 | 40.0 | 0.0 |
 
-## 3. 仓库结构
+### 数据要求说明
+1. 时间列必须可被 `pandas.to_datetime()` 解析。
+2. 负荷列必须是可转为数值的列。
+3. 建议时间间隔尽量规则。
+4. 若存在缺失值，程序会进行插值和补全。
+5. 为保证“分析时间范围最少一周”的要求，建议数据不少于 7 天。
 
-```text
-.
-├── main.py                      # 项目入口
-├── requirements.txt            # Python 依赖
-├── data/
-│   └── quanzhou.csv            # 默认示例数据
-├── figures/                    # 运行后生成图像
-│   └── README.md               # figures 目录图像说明
-└── src/
-    ├── data_loader.py          # CSV 搜索、编码识别、数据读取
-    ├── preprocess.py           # 列识别、数据清洗、时间特征构造
-    ├── statistics_analysis.py  # 基础统计、差分/相关性/频谱分析
-    ├── time_scale_analysis.py  # 年/月/周/日/小时尺度统计与图表
-    ├── season_analysis.py      # 季节性与分布特征图表
-    ├── emd_decomposition.py    # EMD 分解、IMF 频率分类与可视化
-    ├── lstm_dataset.py         # 序列样本构造与 DataLoader
-    ├── lstm_model.py           # LSTM 预测模型
-    ├── model_comparison.py     # 模型指标比较与最佳模型记录
-    ├── evaluation.py           # 指标计算、预测图与误差分析
-    ├── forecast_pipeline.py    # 预测主流程与策略对比
-    └── visualization.py        # 绘图风格与图片保存工具
+## 4. 环境安装方法
+
+### 4.1 创建虚拟环境（推荐）
+```bash
+python -m venv .venv
+source .venv/bin/activate
 ```
 
----
-
-## 4. 数据输入机制
-
-### 4.1 自动发现 CSV
-
-程序会在仓库根目录下递归搜索 `*.csv` 文件，并跳过以下目录：
-
-- `.git`
-- `outputs`
-- `figures`
-- `__pycache__`
-- `.venv`
-- `venv`
-
-随后会优先选择：
-
-1. 位于 `data/` 目录中的 CSV；
-2. 在候选数据中体积更大的文件。
-
-因此，默认情况下会选中：
-
-- `data/quanzhou.csv`
-
-### 4.2 编码识别
-
-程序会按顺序尝试以下编码读取 CSV：
-
-- `utf-8`
-- `utf-8-sig`
-- `gb18030`
-- `gbk`
-- `big5`
-- `latin1`
-
-仓库自带示例数据 `data/quanzhou.csv` 在当前环境下可被识别为 `gb18030`。
-
-### 4.3 自动识别列名
-
-程序会自动推断：
-
-- 时间列；
-- 负荷列。
-
-支持的关键字包含中英文两类，例如：
-
-- 时间列：`time`、`date`、`datetime`、`timestamp`、`时间`、`日期`、`采样时间`；
-- 负荷列：`load`、`power`、`demand`、`mw`、`kw`、`负荷`、`功率`、`电力`。
-
-如果列名不明显，程序还会进一步：
-
-- 根据可解析为日期时间的比例推断时间列；
-- 根据数值化成功比例推断负荷列。
-
-### 4.4 当前示例数据概况
-
-仓库自带数据文件：
-
-- `data/quanzhou.csv`
-
-数据特征：
-
-- 共 **35040** 行；
-- 共 **7** 列；
-- 包含中文字段，如 `时间`、`负荷`、温度、湿度和降雨量等；
-- 时间粒度为 **15 分钟**；
-- 时间范围从 **2018/1/1 0:00** 开始。
-
-当前代码会保留示例数据中的温度、湿度、降雨量等数值字段，并与派生的时间特征一起进入预测模型。
-
----
-
-## 5. 数据清洗与特征构造
-
-数据清洗主要由 `src/preprocess.py` 完成，步骤包括：
-
-1. 解析时间列为 `timestamp`；
-2. 将负荷列转为数值型 `load`；
-3. 删除非法时间记录；
-4. 按时间排序；
-5. 对重复时间戳按平均值聚合；
-6. 对缺失负荷值执行时间插值；
-7. 对其余数值型外生变量也执行插值和前向/后向填充；
-8. 保留可用的天气/环境数值列作为预测输入。
-
-同时，程序会构造以下时间特征，供统计分析和多变量预测使用：
-
-- `year`
-- `month`
-- `day`
-- `hour`
-- `weekday`
-- `minute`
-- `hour_sin` / `hour_cos`
-- `weekday_sin` / `weekday_cos`
-- `month_sin` / `month_cos`
-- `weekday_name`
-- `is_weekend`
-- `date`
-- `season`
-
-程序还会输出数据质量报告，例如：
-
-- 原始记录数；
-- 无效时间行数；
-- 无效负荷行数；
-- 重复时间戳行数；
-- 清洗后记录数；
-- 剩余缺失值数量。
-
----
-
-## 6. 统计分析与可视化内容
-
-运行主流程后，仓库会产出较完整的分析图表，主要分为以下几类。
-
-### 6.1 多时间尺度分析
-
-- 原始负荷时间序列图；
-- 月平均负荷图；
-- 月负荷箱线图；
-- 工作日 / 周末负荷对比图；
-- 年 / 月 / 周 / 日 / 小时统计表。
-
-### 6.2 季节性与分布特征
-
-- 四季日内负荷曲线；
-- 负荷分布直方图；
-- 负荷经验分布函数图；
-- 负荷爬坡分布图；
-- 日峰谷统计表。
-
-### 6.3 差分、相关性与频域分析
-
-- 一阶差分时序图与分布图；
-- 二阶差分时序图与分布图；
-- ACF 图；
-- PACF 图；
-- 滞后散点图；
-- 相关性热力图；
-- FFT 频谱图。
-
-### 6.4 EMD 分解与 IMF 分析
-
-- EMD 分解总览图；
-- IMF 分量叠加图；
-- IMF 频谱总览图；
-- IMF 主频分类图；
-- IMF 能量占比图；
-- IMF 重构图；
-- IMF 波动性分解图。
-
-关于 `figures/` 下图片的逐一解释，可以继续查看：
-
-- `figures/README.md`
-
----
-
-## 7. 预测部分说明
-
-当前版本中，负荷预测模块只保留 4 条 EMD 组合模型路径：
-
-- **EMD+LSTM**
-- **EMD+SCINet**
-- **EMD+iTransformer**
-- **EMD+TimeXer**
-
-它们共享同一套预测流程：
-
-1. 先执行 EMD 分解；
-2. 根据 `--imf-components` 选择前 `k` 个 IMF；
-3. 用原始负荷减去这 `k` 个 IMF 之和，构造 `remainder_component`；
-4. 对每个分量分别训练同一种模型；
-5. 将各分量预测值相加，重构总负荷预测结果；
-6. 按 `RMSE → MAE → MAPE` 的优先顺序比较四种模型，输出最优解。
-
-需要注意：
-
-- 当前仓库中的 `SCINet`、`iTransformer`、`TimeXer` 为**轻量接口实现**，用于完成统一的 EMD 组合对比流程；
-- 如果你后续希望替换成更严格的论文版或你自己的源码实现，可以继续在现有接口基础上替换模型主体；
-- 统一输出文件始终对应本次运行中误差最优的那一个 EMD 组合模型，而不是固定某一种模型。
-
-当前主要输出包括：
-
-- `outputs/emd_lstm_forecast.csv`
-- `outputs/emd_scinet_forecast.csv`
-- `outputs/emd_itransformer_forecast.csv`
-- `outputs/emd_timexer_forecast.csv`
-- `outputs/emd_model_metrics.csv`
-- `outputs/model_comparison.csv`
-- `outputs/best_model.txt`
-- `outputs/best_forecast_strategy.txt`
-- `outputs/forecast_results.csv`
-- `outputs/forecast_metrics.csv`
-- `outputs/forecast_metrics.json`
-
-因此，`forecast_results.csv` 和 `forecast_metrics.*` 代表的是：
-
-> **四种 EMD 组合模型中本次评估最优的最终结果。**
-
-## 8. 运行方式
-
-### 8.1 环境要求
-
-建议：
-
-- Python 3.10+
-- Linux / macOS / Windows 均可
-- 有 CUDA 时会自动启用 GPU；否则使用 CPU
-
-### 8.2 安装依赖
-
+Windows PowerShell：
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+### 4.2 安装依赖
 ```bash
 pip install -r requirements.txt
 ```
 
-核心依赖包括：
+## 5. 负荷数据分析功能说明
+分析模块保留并整理了原有主要内容，且现在所有结果都只针对**用户选定时间段**输出。主要包括：
 
-- `numpy`
-- `pandas`
-- `matplotlib`
-- `seaborn`
-- `scipy`
-- `statsmodels`
-- `PyEMD`
-- `holidays`
-- `chinese-calendar`
-- `torch`
+1. **基础统计分析**
+   - 均值、中位数、方差、标准差、偏度、峰度、分位数等
+2. **多时间尺度分析**
+   - 年 / 月 / 周 / 日 / 小时尺度统计表
+3. **月度波动分析**
+   - 月均值、月标准差、月方差、变异系数
+4. **季节性分析**
+   - 季节负荷曲线
+5. **工作日 / 周末分析**
+   - 分小时平均负荷曲线
+6. **差分与相关性分析**
+   - 一阶差分、二阶差分、ACF、PACF、滞后散点图、相关热力图、FFT 频谱
+7. **统计特性图表**
+   - 负荷分布直方图、经验分布函数、爬坡分布图
+8. **峰谷特征统计**
+   - 日峰值、谷值、峰谷差、峰谷比
 
-> `torch` 请按你的设备环境安装匹配版本；如你已单独安装好 PyTorch，可直接安装其余依赖。
+## 6. 时间选择模块使用说明
+分析与预测前，都会先完成时间范围选择。
 
-### 8.3 启动程序
+支持三种方式：
 
-推荐直接通过命令行提供 IMF 个数：
+1. **全部数据**
+2. **自定义开始时间 + 结束时间**
+3. **最近 N 天 / 最近 N 周**
 
+### 时间范围校验规则
+- 最短分析范围为 **1 周**
+- 若开始时间晚于结束时间，程序会给出错误提示
+- 若时间超出数据边界，程序会自动截断到可用范围并提示
+- 若筛选后数据为空，程序会终止并提示重新选择
+
+## 7. 负荷预测流程说明
+预测流程固定为：
+
+1. 对目标负荷序列进行 **EMD 分解**
+2. 选取指定数量的 IMF 分量，并额外构建残差分量
+3. 对每个 IMF / 残差分量分别进行建模预测
+4. 将各分量预测结果进行融合重构
+5. 输出最终预测结果、指标文件、必要图表与记录文件
+
+### 多变量预测说明
+项目保持多变量输入，不会退化为单变量预测。模型输入包含：
+- 当前 IMF 分量（作为目标分量信号）
+- 时间特征（年、月、日、小时、周期编码等）
+- 其他数值型外生特征（如温度、湿度、降雨量等）
+
+## 8. 六种预测方式说明
+
+### 8.1 TCN
+对每个 IMF 分量使用轻量级 TCN 进行预测，再融合输出总预测结果。
+
+### 8.2 LSTM
+对每个 IMF 分量使用轻量级 LSTM 进行预测，再融合输出总预测结果。
+
+### 8.3 AutoFormer
+使用轻量级 Transformer Encoder 风格占位实现，对每个 IMF 分量预测后融合。
+
+### 8.4 SCINet
+使用轻量级 SCINet 风格占位实现，对每个 IMF 分量预测后融合。
+
+### 8.5 混合预测
+对每个 IMF 分量分别运行：
+- TCN
+- LSTM
+- AutoFormer
+- SCINet
+
+然后基于验证表现，为**每个 IMF 分量**选出最优模型，再将这些最优分量结果融合为最终预测结果。
+
+> 说明：当前轻量实现以候选结果比较的方式完成分量选模，适合快速横向实验。
+
+### 8.6 最优预测
+在候选方案中比较：
+- TCN
+- LSTM
+- AutoFormer
+- SCINet
+- 混合预测
+
+然后直接输出整体表现最好的最终结果，并保存最优方案摘要文件。
+
+## 9. 终端命令示例
+
+### 9.1 交互式运行
 ```bash
-python main.py --imf-components 3
+python main.py
+```
+运行后会依次提示：
+- 选择模式：仅分析 / 仅预测 / 分析+预测
+- 选择时间范围：全部 / 自定义 / 最近 N 天 / 最近 N 周
+- 若包含预测，再选择预测方式：TCN / LSTM / AutoFormer / SCINet / 混合预测 / 最优预测
+
+### 9.2 仅分析：全部数据
+```bash
+python main.py --mode analysis --time-mode all
 ```
 
-如果不传 `--imf-components`，程序会在终端中交互输入：
+### 9.3 仅分析：自定义时间范围
+```bash
+python main.py --mode analysis --time-mode range --start "2018-01-01 00:00" --end "2018-03-31 23:45"
+```
 
+### 9.4 仅分析：最近 30 天
+```bash
+python main.py --mode analysis --time-mode recent --recent-value 30 --recent-unit days
+```
+
+### 9.5 仅分析：最近 8 周
+```bash
+python main.py --mode analysis --time-mode recent --recent-value 8 --recent-unit weeks
+```
+
+### 9.6 TCN 预测
+```bash
+python main.py --mode forecast --time-mode recent --recent-value 12 --recent-unit weeks --forecast-method tcn
+```
+
+### 9.7 LSTM 预测
+```bash
+python main.py --mode forecast --time-mode recent --recent-value 12 --recent-unit weeks --forecast-method lstm
+```
+
+### 9.8 AutoFormer 预测
+```bash
+python main.py --mode forecast --time-mode recent --recent-value 12 --recent-unit weeks --forecast-method autoformer
+```
+
+### 9.9 SCINet 预测
+```bash
+python main.py --mode forecast --time-mode recent --recent-value 12 --recent-unit weeks --forecast-method scinet
+```
+
+### 9.10 混合预测
+```bash
+python main.py --mode forecast --time-mode recent --recent-value 12 --recent-unit weeks --forecast-method hybrid
+```
+
+### 9.11 最优预测
+```bash
+python main.py --mode forecast --time-mode recent --recent-value 12 --recent-unit weeks --forecast-method best
+```
+
+### 9.12 分析 + 预测
+```bash
+python main.py --mode both --time-mode recent --recent-value 12 --recent-unit weeks --forecast-method hybrid
+```
+
+### 9.13 指定训练参数
+```bash
+python main.py \
+  --mode forecast \
+  --time-mode recent \
+  --recent-value 12 \
+  --recent-unit weeks \
+  --forecast-method lstm \
+  --lookback 672 \
+  --horizon 96 \
+  --epochs 10 \
+  --batch-size 128 \
+  --train-ratio 0.8 \
+  --imf-components 6
+```
+
+## 10. 输出结果说明
+
+### 10.1 分析输出目录
+分析结果位于：
 ```text
-请输入 IMF 分解个数（1-10）:
+outputs/analysis/<时间标签>/
+├─ dataset_metadata.csv
+├─ data_quality_report.csv
+├─ figures/
+└─ tables/
 ```
 
-### 8.4 运行中的第二次交互
+其中：
+- `tables/filtered_load_data.csv`：时间筛选后的数据
+- `tables/basic_statistics.csv`：基础统计表
+- `tables/yearly_statistics.csv` 等：多时间尺度统计表
+- `figures/`：分析图表输出
 
-主流程接近结束时，程序在绘制“真实值 vs 预测值”图像前，还会要求你输入一个日期：
-
+### 10.2 预测输出目录
+预测结果位于：
 ```text
-请输入要生成预测对比图的日期（YYYY-MM-DD，范围 起始日期 ~ 结束日期）:
+outputs/forecast/<方法>_<时间标签>_<时间戳>/
+├─ figures/
+├─ tables/
+├─ tcn_forecast.csv / lstm_forecast.csv / autoformer_forecast.csv / scinet_forecast.csv
+├─ hybrid_forecast.csv
+├─ best_forecast.csv
+├─ *_metrics.csv
+├─ *_metrics.txt
+├─ *_forecast.png
+├─ *_training_loss.png
+├─ imf_model_selection.csv
+└─ best_method_summary.txt
 ```
 
-只有输入一个**位于预测结果范围内**的日期后，程序才会继续完成：
-
-- `actual_vs_predicted_load.png`
-- `prediction_error_distribution.png`
-- 后续误差分析图
-
-这意味着：
-
-> 当前仓库主流程**不是完全无交互批处理模式**；即使你已经通过命令行提供了 IMF 个数，后面仍然需要再输入一次绘图日期。
-
----
-
-## 9. 主要输出文件
-
-程序会在根目录下自动创建：
-
-- `outputs/`
-- `figures/`
-
-### 9.1 `outputs/` 中常见文件
-
-基础数据与统计结果：
-
-- `cleaned_data.csv`：清洗后的标准化数据；
-- `data_quality_report.csv`：数据质量报告；
-- `dataset_metadata.csv`：数据集路径、编码、识别列名等元信息；
-- `basic_statistics.csv`：基础统计量；
-- `yearly_statistics.csv` / `monthly_statistics.csv` / `weekly_statistics.csv` / `daily_statistics.csv` / `hourly_statistics.csv`；
-- `monthly_volatility_statistics.csv`：月度波动性统计；
-- `daily_peak_valley_metrics.csv`：日峰谷指标。
-
-EMD 与 IMF 分析结果：
-
-- `emd_decomposition_results.csv`：EMD 分解结果；
-- `imf_frequency_features.csv`：IMF 主频与能量特征。
-
-预测与比较结果：
-
-- `emd_lstm_forecast.csv`：EMD+LSTM 预测结果；
-- `emd_scinet_forecast.csv`：EMD+SCINet 预测结果；
-- `emd_itransformer_forecast.csv`：EMD+iTransformer 预测结果；
-- `emd_timexer_forecast.csv`：EMD+TimeXer 预测结果；
-- `emd_model_metrics.csv`：四种 EMD 组合模型指标汇总表；
-- `model_comparison.csv`：模型比较表；
-- `best_model.txt`：模型比较模块记录的最佳模型；
-- `best_forecast_strategy.txt`：最终统一输出采用的最佳策略；
-- `forecast_results.csv`：最终统一预测结果；
-- `forecast_metrics.csv` / `forecast_metrics.json`：最终统一误差指标。
-
-误差分析结果：
-
-- `peak_period_error_stats.csv`
-- `valley_period_error_stats.csv`
-- `holiday_error_stats.csv`
-
-### 9.2 `figures/` 中常见图片
-
-包括但不限于：
-
-- `raw_load_timeseries.png`
-- `monthly_average_load.png`
-- `monthly_load_boxplot.png`
-- `weekday_vs_weekend_load.png`
-- `seasonal_load_analysis.png`
-- `load_distribution_histogram.png`
-- `load_empirical_distribution_function.png`
-- `load_ramp_distribution.png`
-- `diff1_timeseries.png`
-- `diff1_distribution.png`
-- `diff2_timeseries.png`
-- `diff2_distribution.png`
-- `acf_plot.png`
-- `pacf_plot.png`
-- `lag_scatter_plots.png`
-- `correlation_heatmap.png`
-- `fft_spectrum.png`
-- `emd_decomposition_overview.png`
-- `imf_components.png`
-- `imf_spectrum_overview.png`
-- `imf_frequency_classification.png`
-- `imf_energy_ratio.png`
-- `imf_reconstruction.png`
-- `imf_volatility_decomposition.png`
-- `actual_vs_predicted_load.png`
-- `prediction_error_distribution.png`
-- `peak_period_error.png`
-- `valley_period_error.png`
-- `holiday_prediction_error.png`
-- `error_histogram.png`
-- `error_qq_plot.png`
-- `freq_fusion_prediction.png`
-- `27_model_comparison_bar.png`
-
----
-
-## 10. 代码模块职责说明
-
-### `main.py`
-
-负责整个项目调度：
-
-- 解析参数；
-- 准备输出目录；
-- 选择数据集；
-- 调用清洗、分析、EMD 与预测模块；
-- 保存元信息和最终结果。
-
-### `src/data_loader.py`
-
-负责：
-
-- 搜索 CSV 文件；
-- 识别编码；
-- 读取数据；
-- 自动选定主数据集。
-
-### `src/preprocess.py`
-
-负责：
-
-- 自动推断时间列与负荷列；
-- 清洗时间序列；
-- 构造时间衍生特征。
-
-### `src/time_scale_analysis.py`
-
-负责：
-
-- 年 / 月 / 周 / 日 / 小时尺度统计；
-- 原始时序图、月均图、箱线图、工作日/周末图等。
-
-### `src/statistics_analysis.py`
-
-负责：
-
-- 基础统计量；
-- 峰谷指标；
-- 月度波动性；
-- 差分、ACF/PACF、滞后散点、热力图、FFT 频谱。
-
-### `src/season_analysis.py`
-
-负责：
-
-- 四季负荷曲线；
-- 负荷分布图；
-- ECDF 图；
-- Ramp 分布图。
-
-### `src/emd_decomposition.py`
-
-负责：
-
-- 执行 EMD 分解；
-- 保存 IMF 结果；
-- 基于主频与能量分析 IMF；
-- 输出 IMF 相关图表。
-
-### `src/forecast_pipeline.py`
-
-负责：
-
-- 预测参数组织；
-- 未分解预测；
-- IMF 频率融合预测；
-- 多策略比较与最佳策略选择；
-- 输出最终预测结果。
-
-### `src/evaluation.py`
-
-负责：
-
-- 计算 `MAE` / `RMSE` / `MAPE` / `R2`；
-- 生成预测对比图；
-- 输出高峰、低谷、节假日等误差分析结果。
-
----
-
-## 11. 已知实现特点与注意事项
-
-1. **当前流程已切换为多变量负荷预测。**  
-   模型会联合使用目标序列、可用天气数值字段以及派生时间特征进行训练。
-
-2. **命名与实现存在历史痕迹。**  
-   某些输出名或函数名包含 `TCN`，但当前部分核心预测路径实际调用的是 `LSTMForecaster`。
-
-3. **频率融合模型是轻量化近似实现。**  
-   `SCINet`、`Autoformer`、`TimeXer` 不是完整论文复现版本，而是为了形成多分支对比流程而构建的简化结构。
-
-4. **主流程包含终端交互。**  
-   至少会要求输入 IMF 个数；绘制最终预测对比图时还会额外要求输入日期。
-
-5. **节假日误差分析依赖额外节假日库。**  
-   代码优先尝试 `holidays`，失败后回退到 `chinese-calendar`。
-
-6. **EMD 分解上限为 10 个 IMF。**  
-   `--imf-components` 的合法范围也是 `1-10`。
-
-7. **运行成本不低。**  
-   由于要生成大量图表并训练多个模型分支，在 CPU 环境下运行可能较慢。
-
----
-
-## 12. 最简使用建议
-
-如果你只是想先把项目跑通，建议按下面步骤：
-
-### 第一步：安装依赖
-
-```bash
-pip install -r requirements.txt
-```
-
-### 第二步：直接运行示例流程
-
-```bash
-python main.py --imf-components 3
-```
-
-### 第三步：在终端按提示输入绘图日期
-
-输入一个位于预测区间内的日期，例如程序提示范围中的某一天。
-
-### 第四步：重点查看这些结果
-
-建议优先查看：
-
-- `outputs/forecast_results.csv`
-- `outputs/forecast_metrics.csv`
-- `outputs/best_forecast_strategy.txt`
-- `outputs/decomposition_vs_non_decomposition_comparison.csv`
-- `figures/actual_vs_predicted_load.png`
-- `figures/prediction_error_distribution.png`
-- `figures/emd_decomposition_overview.png`
-
----
-
-## 13. 后续可改进方向
-
-如果你准备继续完善这个仓库，比较值得优先改进的方向包括：
-
-- 统一“TCN / LSTM”相关命名，消除历史歧义；
-- 把交互式输入改成纯命令行参数，方便批量运行；
-- 增加配置文件支持；
-- 增加训练日志、模型保存和断点恢复；
-- 提供更标准的实验对比脚本；
-- 为频率融合分支替换为更完整的模型实现。
-
----
-
-## 14. 一句话总结
-
-如果用一句话概括当前仓库：
-
-> 这是一个以**电力负荷单变量时序**为对象，集**数据清洗、统计分析、EMD 分解、分解/未分解预测比较与结果可视化**于一体的完整实验型项目仓库。
+### 输出重点说明
+- 单模型预测：
+  - 当前模型预测结果 CSV
+  - 当前模型指标 CSV/TXT
+  - 当前模型预测图
+  - IMF 分量指标表
+- 混合预测：
+  - `hybrid_forecast.csv`
+  - `hybrid_metrics.csv`
+  - `imf_model_selection.csv`
+- 最优预测：
+  - `best_forecast.csv`
+  - `best_metrics.csv`
+  - `best_method_summary.txt`
+
+### 不再输出的内容
+本次重构**不再生成多模型最终预测效果横向总对比图**，避免产生不必要的大对比图输出。
+
+## 11. 注意事项
+1. 本项目采用**轻量级实现**，优先保证流程清晰、结构统一和终端可运行。
+2. `AutoFormer` 与 `SCINet` 为轻量占位实现，不是原论文完整复现版本。
+3. 混合预测采用“**各 IMF 分量分别选取验证效果最佳模型后再融合**”的策略。
+4. 最优预测采用“**直接输出当前候选方案中整体表现最佳的最终结果**”的策略。
+5. 若筛选时间范围太短，无法完成 `lookback + horizon` 的窗口切片，程序会提示缩小窗口参数或扩大时间范围。
+6. 若本地没有 GPU，程序会自动使用 CPU。
+7. 若本地已安装 `PyEMD / EMD-signal`，程序会优先使用该实现；未安装时会自动退回到轻量级分解方案。
+8. 如果你替换了自己的数据文件，建议先运行一次仅分析模式检查时间列和负荷列识别是否正确。
