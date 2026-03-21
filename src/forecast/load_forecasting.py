@@ -215,11 +215,11 @@ def save_forecast_plot(forecast_df: pd.DataFrame, output_path: Path, title: str)
     if len(plot_df) > 7 * 24 * 4:
         plot_df = plot_df.tail(7 * 24 * 4)
     fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(plot_df["timestamp"], plot_df["actual_load"], label="实际负荷", linewidth=1.0)
-    ax.plot(plot_df["timestamp"], plot_df["predicted_load"], label="预测负荷", linewidth=1.0)
+    ax.plot(plot_df["timestamp"], plot_df["actual_load"], label="Actual Load", linewidth=1.0)
+    ax.plot(plot_df["timestamp"], plot_df["predicted_load"], label="Predicted Load", linewidth=1.0)
     ax.set_title(title)
-    ax.set_xlabel("时间")
-    ax.set_ylabel("负荷")
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Load")
     ax.legend()
     ax.grid(True, alpha=0.3)
     save_figure(fig, output_path.parent, output_path.name)
@@ -242,8 +242,8 @@ def save_forecast_artifacts(
 ) -> None:
     forecast_df.to_csv(output_dir / f"{method_name}_forecast.csv", index=False, encoding="utf-8-sig")
     save_metrics_artifacts(metrics, output_dir, method_name)
-    save_forecast_plot(forecast_df, output_dir / f"{method_name}_forecast.png", f"{method_name.upper()} 预测结果")
-    save_component_loss_plot(loss_history, output_dir / f"{method_name}_training_loss.png", f"{method_name.upper()} IMF 分量训练损失")
+    save_forecast_plot(forecast_df, output_dir / f"{method_name}_forecast.png", f"{method_name.upper()} Forecast")
+    save_component_loss_plot(loss_history, output_dir / f"{method_name}_training_loss.png", f"{method_name.upper()} IMF Component Training Loss")
 
 
 def build_forecast_frame(df: pd.DataFrame, split_idx: int, actual: np.ndarray, predicted: np.ndarray) -> pd.DataFrame:
