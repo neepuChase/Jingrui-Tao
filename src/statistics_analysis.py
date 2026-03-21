@@ -15,6 +15,16 @@ from src.visualization import save_figure
 
 
 LAG_VALUES = (1, 24, 168)
+WEATHER_FEATURE_CANDIDATES = {
+    "temperature": ["平均温度", "avg_temp", "average_temp", "temperature", "temp", "气温", "温度"],
+    "humidity": ["相对湿度", "humidity", "humid", "湿度"],
+    "rainfall": ["降雨量", "rainfall", "precipitation", "rain", "降水"],
+}
+WEATHER_FEATURE_LABELS = {
+    "temperature": "Temperature",
+    "humidity": "Humidity",
+    "rainfall": "Rainfall",
+}
 
 
 def basic_statistics(df: pd.DataFrame) -> pd.DataFrame:
@@ -96,6 +106,7 @@ def create_difference_and_correlation_figures(df: pd.DataFrame, figures_dir: Pat
     _plot_acf_pacf(df_sorted["load"], figures_dir)
     _plot_lag_scatter(df_sorted, figures_dir)
     _plot_correlation_heatmap(df_sorted, figures_dir)
+    _plot_weather_correlation(df_sorted, figures_dir)
     _plot_fft_spectrum(df_sorted, figures_dir)
 
 
@@ -190,6 +201,57 @@ def _plot_correlation_heatmap(df: pd.DataFrame, figures_dir: Path) -> None:
     sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", square=True, ax=ax)
     ax.set_title("Feature Correlation Heatmap")
     save_figure(fig, figures_dir, "correlation_heatmap.png")
+
+
+def _match_weather_feature_columns(df: pd.DataFrame) -> dict[str, str]:
+    matched: dict[str, str] = {}
+    normalized = {col: str(col).strip().lower().replace(" ", "") for col in df.columns}
+
+    for feature_name, keywords in WEATHER_FEATURE_CANDIDATES.items():
+        for keyword in keywords:
+            normalized_keyword = keyword.strip().lower().replace(" ", "")
+            for col, norm_col in normalized.items():
+                if col in {"timestamp", "load"}:
+                    continue
+                if normalized_keyword in norm_col:
+                    matched[feature_name] = col
+                    break
+            if feature_name in matched:
+                break
+
+    return matched
+
+
+def _plot_weather_correlation(df: pd.DataFrame, figures_dir: Path) -> None:
+    matched_columns = _match_weather_feature_columns(df)
+    if len(matched_columns) < 3:
+        return
+
+    plot_df = pd.DataFrame(
+        {WEATHER_FEATURE_LABELS[name]: pd.to_numeric(df[column], errors="coerce") for name, column in matched_columns.items()}
+    )
+    plot_df.insert(0, "Load", pd.to_numeric(df["load"], errors="coerce"))
+    plot_df = plot_df.dropna()
+    if plot_df.empty:
+        return
+
+    corr_series = plot_df.corr(numeric_only=True).loc["Load", ["Temperature", "Humidity", "Rainfall"]]
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+    colors = ["#d62728" if value >= 0 else "#1f77b4" for value in corr_series]
+    bars = ax.bar(corr_series.index, corr_series.values, color=colors, width=0.55)
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_ylim(-1.0, 1.0)
+    ax.set_ylabel("Pearson Correlation")
+    ax.set_title("Load Correlation with Temperature, Humidity, and Rainfall")
+    ax.grid(axis="y", alpha=0.3)
+
+    for bar, value in zip(bars, corr_series.values):
+        offset = 0.03 if value >= 0 else -0.06
+        va = "bottom" if value >= 0 else "top"
+        ax.text(bar.get_x() + bar.get_width() / 2, value + offset, f"{value:.2f}", ha="center", va=va)
+
+    save_figure(fig, figures_dir, "load_weather_correlation.svg")
 
 
 def _infer_sampling_hours(timestamps: pd.Series) -> float:
